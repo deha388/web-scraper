@@ -3,7 +3,8 @@ from src.core.tracker.nausys_tracker import NausysTracker
 from src.core.tracker.mmk_tracker import MMKTracker
 from src.infra.adapter.nausys_repository import NausysRepository
 from src.api.dto.bot_dto import BotStatus, BotType, BotStatusResponse
-from src.infra.adapter.entity.nausys_entity import NausysCompanyData, NausysYachtData, NausysPeriod, NausysYachtDetail, NausysPrice
+from src.infra.adapter.entity.nausys_entity import PriceInfo, BookingDetail, BookingPeriod, CompanyResult
+from motor.motor_asyncio import AsyncIOMotorDatabase
 import logging
 import asyncio
 from typing import Dict, Optional
@@ -30,13 +31,17 @@ class BotController:
         BotType.MMK: None
     }
 
-    def __new__(cls):
+    def __new__(cls, db: AsyncIOMotorDatabase = None):
         if cls._instance is None:
             cls._instance = super(BotController, cls).__new__(cls)
+            cls._instance._db = db
         return cls._instance
 
-    def __init__(self):
-        self.nausys_repo = NausysRepository()
+    def __init__(self, db: AsyncIOMotorDatabase = None):
+        if not hasattr(self, '_initialized'):
+            self._db = db
+            self.nausys_repo = NausysRepository(self._db)
+            self._initialized = True
 
     async def start_bot(self, bot_type: BotType, interval_minutes: int = 60) -> BotStatusResponse:
         """Start a specific bot with given interval"""
@@ -134,46 +139,40 @@ class BotController:
             results = tracker.process_all_yachts()
             if results:
                 for company_id, yacht_data in results.items():
-                    yacht_list = []
+                    company_results = []
                     for yacht_id, periods in yacht_data.items():
-                        period_list = []
+                        booking_periods = []
                         for period_data in periods:
-                            yacht_details = []
+                            details = []
                             for detail in period_data["details"]:
-                                price = NausysPrice(
+                                price_info = PriceInfo(
                                     discounted_price=detail["prices"]["discounted_price"],
                                     original_price=detail["prices"]["original_price"],
                                     discount_percentage=detail["prices"]["discount_percentage"]
                                 )
-                                yacht_detail = NausysYachtDetail(
+                                booking_detail = BookingDetail(
                                     yacht_name=detail["yacht_name"],
                                     status=detail["status"],
                                     location=detail["location"],
-                                    prices=price
+                                    prices=price_info
                                 )
-                                yacht_details.append(yacht_detail)
+                                details.append(booking_detail)
 
-                            period = NausysPeriod(
-                                period_from=datetime.strptime(period_data["period_from"], "%Y-%m-%d %H:%M:%S"),
-                                period_to=datetime.strptime(period_data["period_to"], "%Y-%m-%d %H:%M:%S"),
-                                details=yacht_details
+                            booking_period = BookingPeriod(
+                                period_from=period_data["period_from"],
+                                period_to=period_data["period_to"],
+                                details=details
                             )
-                            period_list.append(period)
+                            booking_periods.append(booking_period)
 
-                        yacht = NausysYachtData(
+                        company_result = CompanyResult(
                             yacht_id=yacht_id,
-                            periods=period_list
+                            booking_periods=booking_periods
                         )
-                        yacht_list.append(yacht)
-
-                    company_data = NausysCompanyData(
-                        company_id=company_id,
-                        company_name=company_id,  # You might want to get actual company name from somewhere
-                        yachts=yacht_list
-                    )
+                        company_results.append(company_result)
 
                     # Save to database
-                    success = await self.nausys_repo.save_company_data(company_data)
+                    success = await self.nausys_repo.save_company_data(company_id, company_results)
                     if not success:
                         logger.error(f"Failed to save data for company {company_id}")
 

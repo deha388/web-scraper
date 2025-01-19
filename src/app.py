@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from src.api.routes import auth, bot, prices
 from src.infra.config.settings import MONGO_IP, MONGO_PORT, MONGO_DB, MONGO_USERNAME, MONGO_PASSWORD
 from src.infra.config.database import config
+from src.infra.config.init_database import init_database
 import logging
 
 # Configure logging
@@ -19,6 +20,9 @@ PREFIX = "/api/v1"
 async def lifespan(app: FastAPI):
     # Startup
     try:
+        # Initialize database
+        db = init_database()
+        app.state.db = db
         logger.info("Connected to MongoDB")
     except Exception as e:
         logger.error(f"Failed to connect to MongoDB: {str(e)}")

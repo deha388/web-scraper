@@ -12,7 +12,7 @@ config = Config(".env")
 APP_NAME: str = "Boat Price Tracker"
 MONGO_IP: str = config('MONGO_IP', cast=str, default='localhost')
 MONGO_PORT: int = config('MONGO_PORT', cast=int, default=27017)
-MONGODB_DB_NAME: str = config('MONGO_DB', cast=str, default='boat_tracker')
+MONGO_DB: str = config('MONGO_DB', cast=str, default='boat_tracker')
 MONGO_USERNAME: Optional[str] = config('MONGO_USERNAME', cast=str, default='')
 MONGO_PASSWORD: Optional[str] = config('MONGO_PASSWORD', cast=str, default='')
 

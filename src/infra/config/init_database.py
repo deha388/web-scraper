@@ -6,7 +6,7 @@ from src.infra.config.settings import (
     MONGO_PORT,
     MONGO_USERNAME,
     MONGO_PASSWORD,
-    MONGODB_DB_NAME,
+    MONGO_DB,
 )
 
 
@@ -15,9 +15,9 @@ def init_database() -> DatabaseConfig:
     if MONGO_USERNAME and MONGO_PASSWORD:
         username = quote_plus(MONGO_USERNAME)
         password = quote_plus(MONGO_PASSWORD)
-        db_conf.database_url = f"mongodb://{username}:{password}@{MONGO_IP}:{MONGO_PORT}/{MONGODB_DB_NAME}"
+        db_conf.database_url = f"mongodb://{username}:{password}@{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
     else:
-        db_conf.database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGODB_DB_NAME}"
+        db_conf.database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
 
     errors = db_conf.check()
     if errors:
