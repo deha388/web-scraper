@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from src.api.routes import auth, bot, prices
+from src.api.routes import auth, bot
 from src.infra.config.settings import MONGO_IP, MONGO_PORT, MONGO_DB, MONGO_USERNAME, MONGO_PASSWORD
 from src.infra.config.database import config
 from src.infra.config.init_database import init_database
@@ -57,6 +57,5 @@ def create_app():
     # Include routers with prefix
     app.include_router(auth.router, prefix=PREFIX, tags=['Authentication'])
     app.include_router(bot.router, prefix=PREFIX, tags=['Bot Control'])
-    app.include_router(prices.router, prefix=PREFIX, tags=['Price Tracking'])
 
     return app

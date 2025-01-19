@@ -32,50 +32,81 @@ class NausysRepository(BaseRepository):
         booking_data = await self.find_many(collection_name, query)
         return booking_data
 
-    async def save_yacht_ids(self, competitor_name: str, yacht_ids: List[str]):
+    async def upsert_competitor_yacht_ids(
+        self,
+        competitor_name: str,
+        yacht_ids: List[str]
+    ):
+        """
+        competitor adlı koleksiyonda, competitor_name alanı eşleşen bir doküman varsa
+        -> 'yacht_ids' alanını tamamen yeni listeyle günceller (replace).
+        Yoksa -> yeni bir doküman oluşturur.
 
-        if not yacht_ids:
-            return None
-
-        collection_name = "nausys_firm_yachts"
-        docs_to_insert = []
-        now_utc = datetime.datetime.utcnow()
-
-        for yid in yacht_ids:
+        Örnek doküman (competitor koleksiyonunda):
+         {
+           "competitor_name": "rudder",
+           "yacht_ids": ["yat_id_1", "yat_id_2", ...]
+         }
+        """
+        collection_name = "competitor"  # Sabit isim
+        # Önce var mı diye kontrol
+        existing_doc = await self.find_one(collection_name, {"competitor_name": competitor_name})
+        if existing_doc:
+            # Güncelle
+            await self.update_one(
+                collection_name,
+                {"competitor_name": competitor_name},
+                {"$set": {"yacht_ids": yacht_ids}}
+            )
+        else:
+            # Insert
             doc = {
                 "competitor_name": competitor_name,
-                "yacht_id": yid,
-                "inserted_at": now_utc
+                "yacht_ids": yacht_ids
             }
-            docs_to_insert.append(doc)
+            await self.create_one(collection_name, doc)
 
-        inserted_ids = await self.create_many(collection_name, docs_to_insert)
-        return inserted_ids
+    async def get_competitor_yacht_ids(self, competitor_name: str) -> List[str]:
+        """
+        Tek bir rakibin (competitor_name) kayıtlı olan yat ID’lerini getirir.
+        Eşleşen doküman yoksa boş liste döndürür.
+        """
+        collection_name = "competitor"
+        doc = await self.find_one(collection_name, {"competitor_name": competitor_name})
+        if doc:
+            # 'yacht_ids' alanı yoksa default []
+            return doc.get("yacht_ids", [])
+        return []
 
-    async def get_yacht_ids_for_competitor(self, competitor_name: str) -> List[str]:
-        collection_name = "nausys_firm_yachts"
-        query = {"competitor_name": competitor_name}
+    async def get_all_competitors(self) -> List[Dict[str, Any]]:
+        """
+        competitor koleksiyonundaki tüm dokümanları döndürür.
+        Örnek dönüş:
+         [
+           {
+             "competitor_name": "rudder",
+             "yacht_ids": ["yat_id_1", "yat_id_2"]
+           },
+           {
+             "competitor_name": "some_other",
+             "yacht_ids": ["yat_id_10"]
+           }
+         ]
+        """
+        collection_name = "competitor"
+        docs = await self.find_many(collection_name, {})
+        return docs
 
-        documents = await self.find_many(collection_name, query)
-        yacht_id_set = set()
-        for doc in documents:
-            yacht_id_set.add(doc["yacht_id"])
-
-        return list(yacht_id_set)
-
-    async def get_all_companies_and_yacht_ids(self) -> Dict[str, List[str]]:
-
-        collection_name = "nausys_firm_yachts"
-        all_docs = await self.find_many(collection_name, {})
-
-        results = {}
-        for doc in all_docs:
-            competitor = doc["competitor_name"]
-            yid = doc["yacht_id"]
-            if competitor not in results:
-                results[competitor] = []
-
-            if yid not in results[competitor]:
-                results[competitor].append(yid)
-
-        return results
+    async def get_all_competitors_and_yacht_ids(self) -> Dict[str, List[str]]:
+        """
+        Tüm rakipleri ve onların yat id listelerini
+        {'rudder': ['yat_id_1','yat_id_2'], 'some_other': [...]} formatında döndürür.
+        """
+        collection_name = "competitor"
+        docs = await self.find_many(collection_name, {})
+        result = {}
+        for doc in docs:
+            cname = doc["competitor_name"]
+            yids = doc.get("yacht_ids", [])
+            result[cname] = yids
+        return result
