@@ -1,16 +1,27 @@
 from pydantic import BaseModel
-from typing import List
+from enum import Enum
+from typing import Optional
 from datetime import datetime
 
-class BotStartRequest(BaseModel):
-    platform: str
-    competitor_ids: List[str]
-    boat_ids: List[str]
-    start_date: datetime
-    end_date: datetime
+
+class BotStatus(str, Enum):
+    RUNNING = "running"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+class BotType(str, Enum):
+    NAUSYS = "nausys"
+    MMK = "mmk"
+
+
+class BotIntervalRequest(BaseModel):
+    interval_minutes: Optional[int] = 60  # Default to run every hour
+
 
 class BotStatusResponse(BaseModel):
-    platform: str
-    status: str
-    last_run: datetime
-    next_run: datetime 
+    bot_type: BotType
+    status: BotStatus
+    message: str
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None

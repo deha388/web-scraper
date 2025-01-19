@@ -3,8 +3,9 @@ from typing import Dict
 import threading
 import time
 
+
 class BaseBotController:
-    _bots: Dict[str, Dict] = {}  # Platform bazlı bot durumlarını tut
+    _bots: Dict[str, Dict] = {}
     _lock = threading.Lock()
 
     @classmethod
@@ -40,8 +41,7 @@ class BaseBotController:
     def _run_bot(platform: str):
         while BaseBotController._bots[platform]['is_running']:
             try:
-                # Bot işlemleri burada yapılacak
-                time.sleep(60)  # Her dakika kontrol et
+                time.sleep(60)
             except Exception as e:
                 BaseBotController._bots[platform]['status'] = f'error: {str(e)}'
-                break 
+                break

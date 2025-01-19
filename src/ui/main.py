@@ -6,6 +6,38 @@ import pandas as pd
 import requests
 from config import API_URL, TEST_USER
 
+def start_bot(platform_name):
+    """Start the bot and check/update data"""
+    try:
+        response = requests.post(
+            f"{API_URL}/api/bot/start",
+            headers={"Authorization": f"Bearer {st.session_state['token']}"}
+        )
+        if response.ok:
+            data = response.json()
+            st.success(data["message"])
+            # Refresh the page after successful bot run
+            if data.get("updated", False):
+                st.rerun()
+        else:
+            st.error(f"Bot başlatma hatası: {response.text}")
+    except Exception as e:
+        st.error(f"Hata: {str(e)}")
+
+def stop_bot(platform_name):
+    """Stop the bot"""
+    try:
+        response = requests.post(
+            f"{API_URL}/api/bot/stop",
+            headers={"Authorization": f"Bearer {st.session_state['token']}"}
+        )
+        if response.ok:
+            st.error(f"{platform_name} botu durduruldu!")
+        else:
+            st.error(f"Bot durdurma hatası: {response.text}")
+    except Exception as e:
+        st.error(f"Hata: {str(e)}")
+
 def render_platform_page(platform_name):
     st.title(f"{platform_name} Fiyat Takip Sistemi")
     
@@ -14,27 +46,11 @@ def render_platform_page(platform_name):
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.button(f"🟢 {platform_name}\nBaşlat", use_container_width=True):
-            try:
-                response = requests.post(
-                    f"{API_URL}/api/{platform_name.lower()}/start",
-                    headers={"Authorization": f"Bearer {st.session_state['token']}"}
-                )
-                if response.status_code == 200:
-                    st.success(f"{platform_name} botu başlatıldı!")
-            except Exception as e:
-                st.error(f"Hata: {str(e)}")
+            start_bot(platform_name)
     
     with col2:
         if st.button(f"🔴 {platform_name}\nDurdur", use_container_width=True):
-            try:
-                response = requests.post(
-                    f"{API_URL}/api/{platform_name.lower()}/stop",
-                    headers={"Authorization": f"Bearer {st.session_state['token']}"}
-                )
-                if response.status_code == 200:
-                    st.error(f"{platform_name} botu durduruldu!")
-            except Exception as e:
-                st.error(f"Hata: {str(e)}")
+            stop_bot(platform_name)
 
     # Üst Metrikler
     col1, col2, col3, col4 = st.columns(4)

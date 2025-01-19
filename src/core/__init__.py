@@ -1,1 +1,3 @@
-# Bu dosya boş kalabilir 
+"""
+Core package
+""" 
