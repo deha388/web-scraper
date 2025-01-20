@@ -1,7 +1,8 @@
+# src/core/tracker/nausys_tracker.py
+
 import asyncio
 import time
 import logging
-import json
 import requests
 import re
 
@@ -25,10 +26,12 @@ class BaseTracker:
 
 class NausysTracker(BaseTracker):
     """
-    Hem Selenium (scraping) hem de Requests (API) kullanarak:
-      1) Yat ID'lerini çekme
-      2) Çekilen ID'ler için rezervasyon verilerini toplama
-    akışlarını yöneten bir sınıf.
+    - scrape_yacht_ids_and_save:
+        Rakip ismi + search_text + click_text -> Nausys'te firma filtreler, ID'leri okur.
+        DB'ye competitor kaydı (yacht_ids, search_text, click_text).
+    - collect_data_and_save:
+        DB'de bugüne ait verisi eksik olan rakipleri bulur,
+        her biri için sayfada filtre uygular -> fetch_booking_details -> kaydeder.
     """
 
     def __init__(self):
@@ -37,15 +40,12 @@ class NausysTracker(BaseTracker):
         self.driver = None
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logged_in = False
-
-        # Veritabanı bağlantısı
         self.db_conf = init_database()
 
     # ------------------------------------------------------------------------------
-    # Selenium / Login / Setup
+    # Selenium Setup / Login
     # ------------------------------------------------------------------------------
     def setup_driver(self):
-        """Chrome driver'ı kurar ve başlatır."""
         self.logger.info("Driver kurulumu başlıyor...")
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service)
@@ -53,15 +53,14 @@ class NausysTracker(BaseTracker):
         self.logger.info("Driver başarıyla kuruldu ve pencere maximize edildi.")
 
     def login(self):
-        """Selenium ile Nausys'e giriş yapar (eğer daha önce yapılmadıysa)."""
         if self.logged_in:
             self.logger.info("Zaten login durumundasınız, tekrar giriş yapılmadı.")
             return True
         try:
             self.logger.info("Nausys ana sayfası açılıyor...")
             self.driver.get(self.base_url)
-
             self.logger.info("Login form elementleri bekleniyor...")
+
             username = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']"))
             )
@@ -70,17 +69,16 @@ class NausysTracker(BaseTracker):
             self.logger.info("Kullanıcı bilgileri giriliyor...")
             username.clear()
             password.clear()
-            # KENDİ GERÇEK KREDİNLERİNİZLE DEĞİŞTİRİN
+
+            # Gerçek kullanıcı / şifre
             username.send_keys("user@SAAMO")
             password.send_keys("sail1234")
 
-            self.logger.info("Login butonuna tıklanıyor...")
             login_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
             )
             login_button.click()
 
-            self.logger.info("Ana sayfa yüklenmesi bekleniyor...")
             WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".layout-main"))
             )
@@ -92,17 +90,14 @@ class NausysTracker(BaseTracker):
             return False
 
     def go_to_booking_list_page(self):
-        """Booking list sayfasına gider. Gerekliyse login olmaya çalışır."""
         try:
             if not self.logged_in:
                 self.logger.info("Login durumu FALSE, otomatik login deniyor...")
                 if not self.login():
                     self.logger.error("Login başarısız oldu, booking list sayfasına gidilemiyor.")
                     return
-
             self.logger.info("Booking list sayfasına yönlendiriliyor...")
             self.driver.get("https://agency.nausys.com/NauSYS-agency/app/bookinglist.xhtml")
-
             WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".layout-main"))
             )
@@ -112,13 +107,9 @@ class NausysTracker(BaseTracker):
             raise
 
     # ------------------------------------------------------------------------------
-    # 1) Yat ID'lerini Çekmeye Yönelik Metotlar
+    # 1) Scraping Metotları
     # ------------------------------------------------------------------------------
     def select_autocomplete_item(self, input_css, panel_css, text_to_type, text_to_click):
-        """
-        Autocomplete input'a text yazıp, panelde beliren seçeneklerden
-        'text_to_click' öğesini bulup tıklar.
-        """
         try:
             input_box = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, input_css))
@@ -131,7 +122,6 @@ class NausysTracker(BaseTracker):
                 EC.visibility_of_element_located((By.CSS_SELECTOR, panel_css))
             )
             all_li = panel.find_elements(By.TAG_NAME, "li")
-
             desired_li = None
             for li in all_li:
                 if text_to_click.lower() in li.text.lower():
@@ -151,11 +141,6 @@ class NausysTracker(BaseTracker):
             raise
 
     def select_charter_company_and_search(self, company_search_text, company_click_text):
-        """
-        Belirtilen firma adıyla autocomplete araması yapar ve 'Search' butonuna tıklar.
-        Örnek:
-           company_search_text="Rudder & Moor", company_click_text="rudder&moor"
-        """
         try:
             self.logger.info(f"Charter company '{company_search_text}' seçiliyor...")
             self.select_autocomplete_item(
@@ -170,7 +155,6 @@ class NausysTracker(BaseTracker):
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[id$='searchBtn']"))
             )
             search_button.click()
-
             time.sleep(5)
             self.logger.info(f"'{company_search_text}' için arama işlemi tamamlandı.")
         except Exception as e:
@@ -178,9 +162,6 @@ class NausysTracker(BaseTracker):
             raise
 
     def get_yacht_ids_from_page(self) -> list:
-        """
-        Booking list sayfasındaki YachtRow elemanlarından ID değerlerini çekip döndürür.
-        """
         try:
             yacht_ids = []
             yacht_rows = WebDriverWait(self.driver, 10).until(
@@ -198,59 +179,55 @@ class NausysTracker(BaseTracker):
                 except Exception as row_error:
                     self.logger.error(f"YachtRow işleme hatası: {str(row_error)}")
                     continue
-
             self.logger.info(f"Toplam {len(yacht_ids)} adet YACHT ID bulundu: {yacht_ids}")
             return yacht_ids
         except Exception as e:
             self.logger.error(f"Yacht ID'leri alınırken hata: {str(e)}")
             return []
 
-    async def scrape_yacht_ids_and_save(self, company_search_text, company_click_text):
+    async def scrape_yacht_ids_and_save(
+        self,
+        competitor_name: str,
+        company_search_text: str,
+        company_click_text: str
+    ):
         """
-        (Scraping AKIŞI)
-        1) Login + BookingList sayfasına git
-        2) Firma araması yap (company_search_text, company_click_text)
+        1) Selenium login + bookingList
+        2) Firma filtre (company_search_text, company_click_text)
         3) Yat ID'lerini çek
-        4) DB'ye kaydet
-        5) Yat ID listesini return et (opsiyonel)
+        4) DB'ye upsert_competitor_info (competitor_name, yacht_ids, search_text, click_text)
         """
-        self.logger.info(f"Scrape süreci başlatıldı: '{company_search_text}' / '{company_click_text}'")
 
-        # 1) Login + BookingList
+        self.logger.info(f"Scrape süreci başlatıldı: '{company_search_text}' / '{company_click_text}'")
         if not self.logged_in:
             if not self.login():
                 self.logger.error("Login başarısız, yat ID'leri çekilemedi.")
                 return []
 
         self.go_to_booking_list_page()
-
-        # 2) Firma seç + Search
         self.select_charter_company_and_search(company_search_text, company_click_text)
         time.sleep(2)
 
-        # 3) Yat ID'leri sayfadan al
         yacht_ids = self.get_yacht_ids_from_page()
-
-        # 4) Veritabanına kaydet
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
         nausys_repo = NausysRepository(database)
 
-        # Burada "save_yacht_ids" benzeri bir metot kullanabilirsiniz
-        # (Projenizdeki gerçekte neyse ona göre değiştirin)
-        # await nausys_repo.save_yacht_ids(company_click_text, yacht_ids)
+        # Rakip bilgileri + Search/Click text upsert
+        await nausys_repo.upsert_competitor_info(
+            competitor_name=competitor_name,
+            yacht_ids=yacht_ids,
+            search_text=company_search_text,
+            click_text=company_click_text
+        )
 
-        self.logger.info(f"Çekilen YACHT ID'leri DB'ye kaydedildi (firma: {company_click_text}).")
-
+        self.logger.info(f"[{competitor_name}] Çekilen YACHT ID'leri DB'ye kaydedildi: {yacht_ids}")
         return yacht_ids
 
     # ------------------------------------------------------------------------------
-    # 2) Yat ID'leri için Request + DB Kaydetme Akışı
+    # 2) Booking Data Çekme (Requests)
     # ------------------------------------------------------------------------------
     def get_session_data(self):
-        """
-        Selenium üzerinden aktif oturumun cookie (JSESSIONID) ve viewState değerlerini döndürür.
-        """
         try:
             cookies = self.driver.get_cookies()
             jsessionid = next((c['value'] for c in cookies if c['name'] == 'JSESSIONID'), None)
@@ -264,7 +241,7 @@ class NausysTracker(BaseTracker):
 
     def fetch_booking_details(self, yacht_id, period_from, period_to):
         """
-        Belirli (yacht_id, period_from, period_to) için AJAX isteği ile booking detaylarını çeker.
+        Partial AJAX isteği ile (yacht_id, period_from, period_to) booking data.
         """
         try:
             jsessionid, view_state = self.get_session_data()
@@ -282,9 +259,7 @@ class NausysTracker(BaseTracker):
                 "User-Agent": "Mozilla/5.0",
                 "Referer": url
             }
-            cookies = {
-                "JSESSIONID": jsessionid
-            }
+            cookies = {"JSESSIONID": jsessionid}
             data = {
                 "javax.faces.partial.ajax": "true",
                 "javax.faces.source": "searchResultsForm:dailyBookingListComponent",
@@ -309,7 +284,6 @@ class NausysTracker(BaseTracker):
             soup = BeautifulSoup(resp.text, "xml")
             updates = soup.find_all("update")
             booking_data = []
-
             for upd in updates:
                 if upd.get("id") == "searchResultsForm:dailyBookingListComponent":
                     cdata_content = upd.string
@@ -359,69 +333,79 @@ class NausysTracker(BaseTracker):
                                 }
                             }
                             booking_data.append(booking_info)
-
             return booking_data
         except Exception as e:
             self.logger.error(f"Booking detayları çekerken hata: {str(e)}")
             return None
 
-    def generate_weekly_dates(self, start_date_str="2025-04-12", end_date_str="2025-10-25"):
-        """
-        Haftalık (Cumartesi-Cumartesi) tarih aralıklarını üretir:
-          from = YYYY-MM-DD 17:00:00
-          to   = YYYY-MM-DD 08:00:00
-        """
+    @staticmethod
+    def generate_weekly_dates(start_date_str="2025-04-12", end_date_str="2025-10-25"):
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
         date_pairs = []
         current_date = start_date
-
         while current_date < end_date:
             period_from = f"{current_date.strftime('%Y-%m-%d')} 17:00:00"
             period_to = f"{(current_date + timedelta(days=7)).strftime('%Y-%m-%d')} 08:00:00"
             date_pairs.append((period_from, period_to))
             current_date += timedelta(days=7)
-
         return date_pairs
 
+    # ------------------------------------------------------------------------------
+    # 3) Data Toplama (Eksik Rakipler)
+    # ------------------------------------------------------------------------------
     async def collect_data_and_save(self):
         """
-        (API AKIŞI)
-        1) DB'den firma ve yat ID listesini al
-        2) Belirlenen tarih aralıklarında her ID için fetch_booking_details yap
-        3) Sonuçlarını DB'ye kaydet
+        1) DB'den bugüne dair verisi olmayan rakipleri al (get_competitors_missing_data_for_today)
+        2) Her rakip için:
+             -> go_to_booking_list_page
+             -> select_charter_company_and_search (search_text, click_text)
+             -> fetch_booking_details
+             -> DB'ye kaydet
         """
-        # 0) Login + BookingList sayfası
         if not self.logged_in:
             if not self.login():
                 self.logger.error("Login başarısız oldu, data toplanamıyor.")
                 return
 
-        self.go_to_booking_list_page()
-
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
         nausys_repo = NausysRepository(database)
 
-        # 1) DB'den firma ve yat ID'leri al (örnek)
-        # firms_and_yachts = await nausys_repo.get_all_companies_and_yacht_ids()
-        # Örnek bir sözlük olarak varsayalım:
-        firms_and_yachts = {
-            "rudder_moor": ["34432275", "34431785"],
-            "some_other": ["51917352", "40241064"]
-        }
+        missing_competitors = await nausys_repo.get_competitors_missing_data_for_today()
+        if not missing_competitors:
+            self.logger.info("Hiçbir rakip için bugünün verisi eksik değil. İşlem yapılmıyor.")
+            return
 
         date_ranges = self.generate_weekly_dates()
-        self.logger.info(f"Toplam {len(date_ranges)} adet haftalık periyot üretildi.")
+        self.logger.info(f"Toplam {len(date_ranges)} haftalık periyot üretildi.")
 
-        for company, yacht_ids in firms_and_yachts.items():
-            self.logger.info(f"\nFirma: {company}, Yat IDs: {yacht_ids}")
+        for competitor_name, yacht_ids in missing_competitors.items():
+            self.logger.info(f"\nFirma: {competitor_name}, Yat IDs: {yacht_ids}")
+
+            competitor_doc = await nausys_repo.get_competitor_doc(competitor_name)
+            if not competitor_doc:
+                self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
+                continue
+
+            search_text = competitor_doc.get("search_text", "")
+            click_text = competitor_doc.get("click_text", "")
+
+            if not search_text or not click_text:
+                self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
+                continue
+
+            # Sayfaya gidip rakip filtre uygula
+            self.go_to_booking_list_page()
+            self.select_charter_company_and_search(search_text, click_text)
+            time.sleep(2)
+
+            # Her Yat ID için, date_ranges'ta fetch -> save
             for yid in yacht_ids:
                 self.logger.info(f"-- Yat ID: {yid}")
                 for (p_from, p_to) in date_ranges:
                     details = self.fetch_booking_details(yid, p_from, p_to)
                     if details:
-                        # DB'ye kaydetme
                         data_to_insert = {
                             "yacht_id": yid,
                             "booking_periods": [
@@ -432,39 +416,28 @@ class NausysTracker(BaseTracker):
                                 }
                             ]
                         }
-                        await nausys_repo.save_booking_data(company, [data_to_insert])
-
+                        await nausys_repo.save_booking_data(competitor_name, [data_to_insert])
                         self.logger.info(f"  * {p_from} -> {p_to} için {len(details)} kayıt kaydedildi.")
                     else:
                         self.logger.warning(f"  - {p_from} -> {p_to} için veri bulunamadı.")
 
-        self.logger.info("Tüm firmalar için data toplama ve kaydetme işlemi tamamlandı.")
-
-    # ------------------------------------------------------------------------------
-    # Test / Örnek Koşum
-    # ------------------------------------------------------------------------------
+        self.logger.info("Tüm eksik rakipler için data toplama işlemi tamamlandı.")
 
 
+# ---------------------------
+# Test
+# ---------------------------
 async def test_nausys_bot():
-    """
-    Tek bir fonksiyon üzerinden:
-      1) Yat ID Scrape akışı
-      2) Data toplama akışı
-    gösteren örnek.
-    """
     logging.basicConfig(level=logging.INFO)
     bot = NausysTracker()
     bot.setup_driver()
-
     try:
-        # 1) Örnek: "Rudder & Moor" firmasının Yat ID'lerini çekelim
-        yacht_ids = await bot.scrape_yacht_ids_and_save(
-            company_search_text="Rudder & Moor",
-            company_click_text="rudder&moor"
-        )
-        logging.info(f"\nScrape sonucu Yat ID'leri: {yacht_ids}")
+        # competitor = "sailamor"
+        # search = "Sailamor"
+        # click = "Sailamor"
+        # yacht_ids = await bot.scrape_yacht_ids_and_save(competitor, search, click)
+        # logging.info(f"\nScrape sonucu Yat ID'leri (kaydedilenler): {yacht_ids}")
 
-        # 2) Şimdi DB'de zaten ID'ler saklandı varsayıyoruz; data toplayalım
         await bot.collect_data_and_save()
         logging.info("Tüm işlem tamamlandı.")
     except Exception as e:
@@ -473,7 +446,6 @@ async def test_nausys_bot():
         time.sleep(3)
         if bot.driver:
             bot.driver.quit()
-
 
 if __name__ == "__main__":
     asyncio.run(test_nausys_bot())

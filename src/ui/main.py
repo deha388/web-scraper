@@ -5,6 +5,314 @@ from mock_data import generate_mock_prices, get_mock_boats
 import pandas as pd
 import requests
 from config import API_URL, TEST_USER
+from datetime import datetime, date
+
+API_SAILAMOR = "http://localhost:8000/api/v1/sailamor"
+API_COMPETITOR = "http://localhost:8000/api/v1/competitor"
+
+
+def fetch_sailamor_yachts(platform_name):
+    """
+    Tarih değiştiğinde otomatik tetiklenecek.
+    Seçilen tarihe göre /sailamor/yachts/names?date_str=... endpoint'inden
+    tekneleri çekip st.session_state["our_yacht_list"] içine koyar.
+    Diğer seçimleri sıfırlar.
+    """
+    date_str = st.session_state["selected_date"].strftime("%Y-%m-%d")
+    url = f"{API_SAILAMOR}/yachts/names"
+    params = {"platform": str(platform_name).lower(), "date_str": date_str}
+
+    try:
+        resp = requests.get(url, params=params)
+        if resp.ok:
+            data = resp.json()
+            yachts = data.get("yacht_names", [])
+            st.session_state["our_yacht_list"] = yachts
+            # Tekne seçimini reset
+            # st.session_state["selected_yacht"] = "Seçiniz"
+            # Period verilerini reset
+            st.session_state["our_periods_raw"] = []
+            st.session_state["selected_period_label"] = "Seçiniz"
+            # Rakip verilerini de temizleyebiliriz
+            st.session_state["competitor_yacht_list"] = []
+            st.session_state["selected_competitor_yacht"] = "Seçiniz"
+        else:
+            st.error("Tekneler alınamadı: " + resp.text)
+    except Exception as e:
+        st.error(f"fetch_sailamor_yachts hatası: {e}")
+
+
+def fetch_sailamor_periods(platform_name):
+    """
+    Bizim tekne seçimi değiştiğinde otomatik tetiklenecek.
+    /sailamor/yachts/periods endpoint'ine gidip period listesini çeker.
+    """
+    selected_yacht = st.session_state["selected_yacht"]
+    if selected_yacht == "Seçiniz":
+        # Tekne seçilmemiş
+        st.session_state["our_periods_raw"] = []
+        st.session_state["selected_period_label"] = "Seçiniz"
+        return
+
+    date_str = st.session_state["selected_date"].strftime("%Y-%m-%d")
+    url = f"{API_SAILAMOR}/yachts/periods"
+    params = {
+        "platform": str(platform_name).lower(),
+        "date_str": date_str,
+        "yacht_name": selected_yacht
+    }
+
+    try:
+        resp = requests.get(url, params=params)
+        if resp.ok:
+            data = resp.json()
+            periods = data.get("periods", [])
+            # periods => [{"from": "2025-04-12 17:00:00", "to": "2025-04-19 08:00:00"}, ...]
+            st.session_state["our_periods_raw"] = periods
+            st.session_state["selected_period_label"] = "Seçiniz"
+            # Rakip verilerini de temizlemek isteyebilirsiniz
+            st.session_state["competitor_yacht_list"] = []
+            st.session_state["selected_competitor_yacht"] = "Seçiniz"
+        else:
+            st.error("Period alınamadı: " + resp.text)
+    except Exception as e:
+        st.error(f"fetch_sailamor_periods hatası: {e}")
+
+
+def fetch_competitor_yachts(platform_name):
+    """
+    Rakip firma veya period seçimi değiştiğinde otomatik tetiklenecek.
+    Seçili period'a göre rakipte aynı period'a sahip yacht_name'leri çeker.
+    """
+    competitor = st.session_state["selected_competitor"]
+    if competitor == "Seçiniz":
+        st.session_state["competitor_yacht_list"] = []
+        st.session_state["selected_competitor_yacht"] = "Seçiniz"
+        return
+
+    # Rakip firma adını DB formatına çevir ("Rudder&Moor" -> "rudder_moor")
+    comp_key = competitor.lower().replace("&", "_").replace(" ", "_")
+
+    date_str = st.session_state["selected_date"].strftime("%Y-%m-%d")
+    url = f"{API_COMPETITOR}/yachts/names"
+    params = {
+        "platform": str(platform_name).lower(),
+        "competitor": comp_key,
+        "date_str": date_str,
+
+    }
+
+    try:
+        resp = requests.get(url, params=params)
+        if resp.ok:
+            data = resp.json()
+            c_yachts = data.get("yacht_names", [])
+            st.session_state["competitor_yacht_list"] = c_yachts
+            st.session_state["selected_competitor_yacht"] = "Seçiniz"
+        else:
+            st.error("Rakip tekneler alınamadı: " + resp.text)
+    except Exception as e:
+        st.error(f"fetch_competitor_yachts hatası: {e}")
+
+
+def get_chosen_period_value():
+    """
+    Bizim selectbox'ta '2025-04-12 -> 2025-04-19' gibi bir label var;
+    Buna karşılık gelen tam datetime'ları (p['from'], p['to']) bulur.
+    """
+    label = st.session_state["selected_period_label"]
+    if label == "Seçiniz":
+        return None
+
+    periods_raw = st.session_state["our_periods_raw"]
+    # "YYYY-MM-DD -> YYYY-MM-DD" formatında splitted
+    # Ama asıl p['from'] "2025-04-12 17:00:00"
+    # Biz labelda date[:10] kullandık.
+    # Onu yakalayıp periods_raw içinden eşleşeni bulacağız.
+    # Kolaylık için biz her selectbox itemına tam data atayabilirdik.
+    # Burada string parse da yapabiliriz.
+
+    # Yöntem 1: on_change'te item'a tıklayınca st.session_state'ye tam from/to yazmak
+    # Yöntem 2: Metin parse
+    # Burada Yöntem 2:
+    # "2025-04-12 -> 2025-04-19" -> "2025-04-12", "2025-04-19"
+    parts = label.split("->")
+    if len(parts) != 2:
+        return None
+    date_from_str = parts[0].strip()  # "2025-04-12"
+    date_to_str = parts[1].strip()  # "2025-04-19"
+
+    # periods_raw => [{"from":"2025-04-12 17:00:00","to":"2025-04-19 08:00:00"}, ...]
+    for p in periods_raw:
+        if p["from"][:10] == date_from_str and p["to"][:10] == date_to_str:
+            # bulduk
+            return (p["from"], p["to"])
+
+    return None
+
+
+def parse_discounted_price(price_str):
+    """
+    "17.000,00 EUR" gibi bir metni float'a çevirir -> 17000.00
+    Noktaları, virgülleri, "EUR" ibaresini temizleyelim.
+    """
+    # Örnek dönüşümler:
+    # "17.000,00 EUR" -> "17000,00 "
+    # -> "17000.00" -> float(17000.00)
+    tmp = price_str.upper().replace(" EUR", "").replace(".", "").replace(",", ".")
+    try:
+        return float(tmp)
+    except:
+        return 0.0
+
+
+def compare_prices(platform_name):
+    """
+    "Fiyat Karşılaştır" butonuna basıldığında çağrılır.
+    1) Bizim Tekne -> /sailamor/yachts/all_periods
+    2) Rakip Tekne -> /competitor/yachts/all_periods
+    3) (period_from, period_to) bazında merge
+    4) Tabloda "Bizim Konum", "Rakip Konum" sütunlarını göster
+    5) "Aradaki Fark" sütununu € ile formatla
+    """
+
+    # 1) Gerekli seçimler kontrol
+    if (st.session_state["selected_yacht"] == "Seçiniz"
+            or st.session_state["selected_competitor"] == "Seçiniz"
+            or st.session_state["selected_competitor_yacht"] == "Seçiniz"):
+        st.warning("Lütfen tarih, Bizim Tekne, Rakip Firma ve Rakip Tekne seçiniz!")
+        return
+
+    # 2) Endpoint'lere istek
+    date_str = st.session_state["selected_date"].strftime("%Y-%m-%d")
+
+    # Bizim firma
+    url_our = f"{API_SAILAMOR}/yachts/all_periods"
+    params_our = {
+        "platform": platform_name.lower(),
+        "date_str": date_str,
+        "yacht_name": st.session_state["selected_yacht"]
+    }
+    resp_our = requests.get(url_our, params=params_our)
+    if not resp_our.ok:
+        st.error("Bizim firmada all_periods verisi alınamadı: " + resp_our.text)
+        return
+    data_our = resp_our.json().get("periods", [])
+
+    # Rakip firma
+    comp_key = st.session_state["selected_competitor"].lower().replace("&", "_").replace(" ", "_")
+    url_comp = f"{API_COMPETITOR}/yachts/all_periods"
+    params_comp = {
+        "platform": platform_name.lower(),
+        "competitor": comp_key,
+        "date_str": date_str,
+        "yacht_name": st.session_state["selected_competitor_yacht"]
+    }
+    resp_comp = requests.get(url_comp, params=params_comp)
+    if not resp_comp.ok:
+        st.error("Rakip firmada all_periods verisi alınamadı: " + resp_comp.text)
+        return
+    data_comp = resp_comp.json().get("periods", [])
+
+    df_our = pd.DataFrame(data_our)  # columns: period_from, period_to, location, discounted_price, original_price, ...
+    df_comp = pd.DataFrame(
+        data_comp)  # columns: period_from, period_to, location, discounted_price, original_price, ...
+
+    if df_our.empty and df_comp.empty:
+        st.info("Ne bizde ne rakipte kayıt bulunamadı.")
+        return
+
+    # 3) Fiyatları float parse
+    def parse_price(s):
+        if not isinstance(s, str):
+            return 0.0
+        s = s.upper().replace(" EUR", "").replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except:
+            return 0.0
+
+    if not df_our.empty:
+        df_our["price_bizim"] = df_our["discounted_price"].apply(parse_price)
+    else:
+        df_our["price_bizim"] = []
+
+    if not df_comp.empty:
+        df_comp["price_rakip"] = df_comp["discounted_price"].apply(parse_price)
+    else:
+        df_comp["price_rakip"] = []
+
+    # 4) Merge hazırlığı: rename kolonlar
+    df_our.rename(columns={
+        "period_from": "pf_our",
+        "period_to": "pt_our",
+        "location": "loc_our"
+    }, inplace=True)
+    df_comp.rename(columns={
+        "period_from": "pf_comp",
+        "period_to": "pt_comp",
+        "location": "loc_comp"
+    }, inplace=True)
+
+    # 5) Merge => (pf_our, pt_our) == (pf_comp, pt_comp)
+    merged = pd.merge(
+        df_our, df_comp,
+        how="inner",  # sadece ortak satırlar
+        left_on=["pf_our", "pt_our"],
+        right_on=["pf_comp", "pt_comp"],
+        suffixes=("_our", "_rakip")
+    )
+
+    if merged.empty:
+        st.info("Biz ve rakipte eşleşen period bulunamadı!")
+        return
+
+    # 6) Fark ve Durum hesapla
+    merged["fark"] = merged["price_bizim"] - merged["price_rakip"]
+
+    def fark_durum(f):
+        if f < 0:
+            return '🟢 Uygun'
+        elif f > 0:
+            return '🔴 Yüksek'
+        return '🟡 Normal'
+
+    merged["durum"] = merged["fark"].apply(fark_durum)
+
+    # 7) Final tablo kolonları
+    # Başlangıç, Bitiş, Bizim Konum, Rakip Konum,
+    # Bizim İndirimli Fiyat, Rakip İndirimli Fiyat,
+    # Aradaki Fark, Durum
+    final_cols = [
+        "pf_our",
+        "pt_our",
+        "loc_our",  # Bizim Konum
+        "loc_comp",  # Rakip Konum
+        "discounted_price_our",
+        "discounted_price_rakip",
+        "fark",
+        "durum"
+    ]
+    final_df = merged[final_cols].copy()
+
+    final_df.rename(columns={
+        "pf_our": "Başlangıç",
+        "pt_our": "Bitiş",
+        "loc_our": "Bizim Konum",
+        "loc_comp": "Rakip Konum",
+        "discounted_price_our": "Bizim İndirimli Fiyat",
+        "discounted_price_rakip": "Rakip İndirimli Fiyat",
+        "fark": "Aradaki Fark",
+        "durum": "Durum"
+    }, inplace=True)
+
+    # 8) "Aradaki Fark" sütununu "€XX.XX" biçiminde gösterelim
+    # (İsterseniz "Bizim İndirimli Fiyat", "Rakip İndirimli Fiyat" vb. sütunları da benzer şekilde formatlayabilirsiniz.)
+    final_df["Aradaki Fark"] = final_df["Aradaki Fark"].apply(lambda x: f"€{x:.2f}")
+
+    # 9) Tabloyu göster
+    st.dataframe(final_df, use_container_width=True)
+
 
 def start_bot(platform_name):
     """Start the bot and check/update data"""
@@ -24,6 +332,7 @@ def start_bot(platform_name):
     except Exception as e:
         st.error(f"Hata: {str(e)}")
 
+
 def stop_bot(platform_name):
     """Stop the bot"""
     try:
@@ -38,205 +347,60 @@ def stop_bot(platform_name):
     except Exception as e:
         st.error(f"Hata: {str(e)}")
 
+
 def render_platform_page(platform_name):
     st.title(f"{platform_name} Fiyat Takip Sistemi")
-    
+
     # Bot Kontrolü
     st.sidebar.header("Bot Kontrolü")
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.button(f"🟢 {platform_name}\nBaşlat", use_container_width=True):
             start_bot(platform_name)
-    
+
     with col2:
         if st.button(f"🔴 {platform_name}\nDurdur", use_container_width=True):
             stop_bot(platform_name)
 
-    # Üst Metrikler
+    # 6 sütunlu layout:
     col1, col2, col3, col4 = st.columns(4)
+
+    # 1) Tarih Seçimi + on_change (otomatik fetch_sailamor_yachts)
     with col1:
-        st.metric(label="Aktif Takip", value="3 Rakip")
-    with col2:
-        st.metric(label="Haftalık Ort. Fark", value="€150", delta="-30")
-    with col3:
-        st.metric(label="En Düşük Fiyat", value="€950", delta="-100")
-    with col4:
-        st.metric(label="Son Güncelleme", value="5 dk önce")
-
-    # Hafta Seçimi
-    st.header("Haftalık Fiyat Analizi")
-    
-    # Haftalık tarih aralıkları oluştur
-    current_date = datetime.now()
-    start_of_week = current_date - timedelta(days=current_date.weekday())
-    weeks = []
-    for i in range(12):
-        week_start = start_of_week - timedelta(weeks=i)
-        week_end = week_start + timedelta(days=6)
-        weeks.append({
-            'label': f"{week_start.strftime('%d.%m.%Y')} - {week_end.strftime('%d.%m.%Y')}",
-            'start': week_start,
-            'end': week_end
-        })
-    
-    selected_week = st.selectbox(
-        "Hafta Seçimi",
-        options=weeks,
-        format_func=lambda x: x['label'],
-        key=f"{platform_name}_week"
-    )
-
-    # Mock Veri - Haftalık
-    df = generate_mock_prices(
-        start_date=selected_week['start'],
-        end_date=selected_week['end']
-    )
-    
-    # Grafik
-    fig = px.line(df, x='date', y=['price', 'our_price'],
-                  color='competitor',
-                  title=f'Haftalık Fiyat Karşılaştırması ({selected_week["label"]})',
-                  labels={'price': 'Rakip Fiyat', 'our_price': 'Bizim Fiyat'})
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Detaylı Tablo ve Filtreler
-    st.header("Detaylı Fiyat Karşılaştırması")
-    
-    with st.expander("Filtreler", expanded=True):
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            # Tekne Seçimi
-            selected_boats = st.multiselect(
-                "Tekneler",
-                options=[boat["name"] for boat in get_mock_boats()],
-                default=[],
-                key=f"{platform_name}_boats_filter"
-            )
-        with col2:
-            # Rakip Firma Filtresi
-            competitors = ['Hepsi'] + list(df['competitor'].unique())
-            selected_competitors = st.multiselect(
-                "Rakip Firmalar",
-                options=competitors,
-                default=['Hepsi']
-            )
-        with col3:
-            # Fiyat Farkı Durumu Filtresi
-            status_options = ['Hepsi', '🔴 Yüksek', '🟡 Normal', '🟢 Uygun']
-            selected_status = st.multiselect(
-                "Fiyat Durumu",
-                options=status_options,
-                default=['Hepsi']
-            )
-        with col4:
-            # Hafta Filtresi
-            selected_weeks = st.multiselect(
-                "Haftalar",
-                options=[week['label'] for week in weeks],
-                default=[selected_week['label']],
-                key=f"{platform_name}_weeks_filter"
-            )
-
-    # Tüm haftalık verileri getir
-    all_weekly_data = generate_mock_prices_for_all_weeks(
-        start_date=weeks[-1]['start'],  # En eski hafta
-        end_date=weeks[0]['end']        # En yeni hafta
-    )
-    
-    # Fiyat farkı ve durum hesaplama
-    all_weekly_data['price_diff'] = all_weekly_data['our_price'] - all_weekly_data['price']
-    all_weekly_data['status'] = all_weekly_data['price_diff'].apply(
-        lambda x: '🔴 Yüksek' if x > 50 else '🟢 Uygun' if x < -50 else '🟡 Normal'
-    )
-    
-    # Filtreleri uygula
-    filtered_df = filter_weekly_data(
-        all_weekly_data,
-        selected_competitors,
-        selected_status,
-        selected_weeks
-    )
-    
-    # Haftalık verileri göster
-    if not filtered_df.empty:
-        st.dataframe(
-            filtered_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                'week': st.column_config.DateColumn('Hafta'),
-                'competitor': 'Rakip Firma',
-                'price': st.column_config.NumberColumn(
-                    'Rakip Fiyat',
-                    format="€%.2f"
-                ),
-                'our_price': st.column_config.NumberColumn(
-                    'Bizim Fiyat',
-                    format="€%.2f"
-                ),
-                'price_diff': st.column_config.NumberColumn(
-                    'Fiyat Farkı',
-                    format="€%.2f"
-                ),
-                'status': 'Durum'
-            }
+        st.date_input(
+            label="Tarih",
+            value=st.session_state["selected_date"],
+            key="selected_date",
+            on_change=lambda: fetch_sailamor_yachts(str(platform_name).lower())
+            # Tarih değişince direkt bu fonksiyon çağrılacak
         )
-        
-        # İstatistikler
-        st.subheader("Özet İstatistikler")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            avg_price_diff = filtered_df['price_diff'].mean()
-            st.metric(
-                "Ortalama Fiyat Farkı",
-                f"€{avg_price_diff:.2f}",
-                delta=f"€{avg_price_diff:.2f}"
-            )
-        with col2:
-            high_price_count = len(filtered_df[filtered_df['status'] == '🔴 Yüksek'])
-            st.metric("Yüksek Fiyatlı Hafta Sayısı", high_price_count)
-        with col3:
-            low_price_count = len(filtered_df[filtered_df['status'] == '🟢 Uygun'])
-            st.metric("Uygun Fiyatlı Hafta Sayısı", low_price_count)
-    else:
-        st.warning("Seçilen filtrelere uygun veri bulunamadı.")
+    # 2) Bizim Tekne Seçimi
+    with col2:
+        st.selectbox(
+            "Bizim Tekne",
+            options=["Seçiniz"] + st.session_state["our_yacht_list"],
+            key="selected_yacht",
+        )
 
-# Mock data generator'ı güncelle
-def generate_mock_prices_for_all_weeks(start_date, end_date):
-    """Belirtilen tarih aralığındaki tüm haftalar için veri üret"""
-    all_data = []
-    current_date = start_date
-    
-    while current_date <= end_date:
-        week_end = current_date + timedelta(days=6)
-        weekly_data = generate_mock_prices(current_date, week_end)
-        
-        # Hafta bilgisini ekle
-        weekly_data['week'] = current_date
-        
-        all_data.append(weekly_data)
-        current_date += timedelta(days=7)
-    
-    return pd.concat(all_data, ignore_index=True)
+    # 3) Rakip Firma Seçimi + on_change (fetch_competitor_yachts)
+    with col3:
+        st.selectbox(
+            "Rakip Firma",
+            options=["Seçiniz"] + st.session_state["competitor_list"],
+            key="selected_competitor",
+            on_change=lambda: fetch_competitor_yachts(str(platform_name).lower())
+        )
 
-def filter_weekly_data(df, selected_competitors, selected_status, selected_weeks):
-    """Verileri seçilen filtrelere göre filtrele"""
-    filtered_df = df.copy()
-    
-    # Rakip firma filtresi
-    if 'Hepsi' not in selected_competitors:
-        filtered_df = filtered_df[filtered_df['competitor'].isin(selected_competitors)]
-    
-    # Durum filtresi
-    if 'Hepsi' not in selected_status:
-        filtered_df = filtered_df[filtered_df['status'].isin(selected_status)]
-    
-    # Hafta filtresi
-    if selected_weeks:
-        filtered_df = filtered_df[filtered_df['week'].isin(selected_weeks)]
-    
-    return filtered_df.sort_values(['week', 'competitor'], ascending=[False, True])
+    # 4) Rakip Tekne Seçimi (değiştiğinde belki başka işlem yapacaksanız on_change ekleyebilirsiniz)
+    with col4:
+        st.selectbox(
+            "Rakip Tekne",
+            options=["Seçiniz"] + st.session_state["competitor_yacht_list"],
+            key="selected_competitor_yacht",
+        )
+
+    compare_prices(platform_name)
+
 
 def login_page():
     st.markdown(
@@ -250,12 +414,12 @@ def login_page():
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             background: white;
         }
-        
+
         .login-header {
             text-align: center;
             margin-bottom: 2rem;
         }
-        
+
         .stButton > button {
             width: 100%;
         }
@@ -272,16 +436,16 @@ def login_page():
         """,
         unsafe_allow_html=True
     )
-    
+
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    
+
     st.markdown('<div class="login-header">', unsafe_allow_html=True)
     st.title("⛵ Fiyat Takip Sistemi")
     st.markdown("</div>", unsafe_allow_html=True)
-    
+
     email = st.text_input("Email", value=TEST_USER["email"])
     password = st.text_input("Şifre", type="password", value=TEST_USER["password"])
-    
+
     if st.button("Giriş Yap"):
         # Backend bağlantısı olmadığı için test kullanıcı kontrolü
         if email == TEST_USER["email"] and password == TEST_USER["password"]:
@@ -290,7 +454,7 @@ def login_page():
             st.rerun()
         else:
             st.error("Geçersiz email veya şifre!")
-    
+
     # Test bilgilerini göster
     st.markdown(
         f"""
@@ -302,14 +466,37 @@ def login_page():
         """,
         unsafe_allow_html=True
     )
-    
+
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 def init_session_state():
     if "is_logged_in" not in st.session_state:
         st.session_state["is_logged_in"] = False
     if "token" not in st.session_state:
         st.session_state["token"] = None
+    if "selected_date" not in st.session_state:
+        st.session_state["selected_date"] = date.today()
+    if "our_yacht_list" not in st.session_state:
+        st.session_state["our_yacht_list"] = []
+    if "selected_yacht" not in st.session_state:
+        st.session_state["selected_yacht"] = ""
+
+    if "our_periods_raw" not in st.session_state:
+        st.session_state["our_periods_raw"] = []
+    if "selected_period_label" not in st.session_state:
+        st.session_state["selected_period_label"] = "Seçiniz"
+
+    if "competitor_list" not in st.session_state:
+        st.session_state["competitor_list"] = ["Rudder&Moor", "Sailtime", "NaviGo"]  # sabit
+    if "selected_competitor" not in st.session_state:
+        st.session_state["selected_competitor"] = "Seçiniz"
+
+    if "competitor_yacht_list" not in st.session_state:
+        st.session_state["competitor_yacht_list"] = []
+    if "selected_competitor_yacht" not in st.session_state:
+        st.session_state["selected_competitor_yacht"] = "Seçiniz"
+
 
 def main():
     st.set_page_config(
@@ -318,9 +505,9 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
+
     init_session_state()
-    
+
     if not st.session_state["is_logged_in"]:
         login_page()
         return
@@ -329,30 +516,31 @@ def main():
     with st.sidebar:
         st.title("⛵ Fiyat Takip")
         st.caption("Tekne Kiralama Fiyat Analizi")
-        
+
         # Platform Seçimi
         platform = st.radio(
             "Platform Seçimi",
             ["Nausys", "MMK Booking"],
             key="platform_selection"
         )
-        
+
         st.divider()
-        
+
         # Boş container ile çıkış butonunu aşağı it
         st.empty()
         st.empty()
         st.empty()
-        
+
         # Çıkış Yap butonu en altta
         st.markdown("---")
         if st.button("🚪 Çıkış Yap", use_container_width=True):
             st.session_state["is_logged_in"] = False
             st.session_state["token"] = None
             st.rerun()
-    
+
     # Seçilen platforma göre sayfayı render et
     render_platform_page(platform)
 
+
 if __name__ == "__main__":
-    main() 
+    main()
