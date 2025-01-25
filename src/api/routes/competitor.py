@@ -73,7 +73,8 @@ def get_competitor_period_yachts(
         date_str: str = Query(..., description="YYYY-MM-DD formatında"),
         competitor: str = Query(..., description="Ör: rudder_moor, sailtime, navigo"),
         period_from: str = Query(..., description="Tam datetime: 2025-04-12 17:00:00"),
-        period_to: str = Query(..., description="Tam datetime: 2025-04-19 08:00:00")
+        period_to: str = Query(..., description="Tam datetime: 2025-04-19 08:00:00"),
+        current_user: str = Depends(get_current_user)
 ):
     """
     nausys_{competitor}_{YYYYMMDD} koleksiyonunda,
@@ -124,7 +125,8 @@ async def get_competitor_details(
         date_str: str,
         yacht_name: str,
         period_from: str,
-        period_to: str
+        period_to: str,
+        current_user: str = Depends(get_current_user)
 ):
     """
     nausys_{sailamor}_{YYYYMMDD} koleksiyonundan,
@@ -167,7 +169,8 @@ def get_all_periods_for_yacht(
         platform: str = Query(..., description="Ör: nausys"),
         competitor: str = Query(..., description="Ör: ruud_more"),
         date_str: str = Query(..., description="YYYY-MM-DD formatında tarih"),
-        yacht_name: str = Query(..., description="Tekne ismi")
+        yacht_name: str = Query(..., description="Tekne ismi"),
+        current_user: str = Depends(get_current_user)
 ):
     # 1) Tarihi parse et
     try:
@@ -223,7 +226,8 @@ def get_all_periods_for_yacht(
 
 @router.get("/competitor/yachts/names")
 async def get_competitor_yacht_names(platform: str, competitor: str,
-                                     date_str: str = Query(..., description="YYYY-MM-DD formatında tarih")):
+                                     date_str: str = Query(..., description="YYYY-MM-DD formatında tarih"),
+                                     current_user: str = Depends(get_current_user)):
     """
     Seçilen tarihe göre `nausys_sailamor_{yyyyMMdd}` koleksiyonundan
     TÜM `yacht_name` değerlerini (distinct) döndürür.

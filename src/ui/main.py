@@ -7,11 +7,12 @@ import requests
 from config import API_URL, TEST_USER
 from datetime import datetime, date
 
+API_BASE = "http://localhost:8000/api/v1"
 API_SAILAMOR = "http://localhost:8000/api/v1/sailamor"
 API_COMPETITOR = "http://localhost:8000/api/v1/competitor"
 
 
-def fetch_sailamor_yachts(platform_name):
+def fetch_sailamor_yachts(platform_name, headers):
     """
     Tarih değiştiğinde otomatik tetiklenecek.
     Seçilen tarihe göre /sailamor/yachts/names?date_str=... endpoint'inden
@@ -23,7 +24,7 @@ def fetch_sailamor_yachts(platform_name):
     params = {"platform": str(platform_name).lower(), "date_str": date_str}
 
     try:
-        resp = requests.get(url, params=params)
+        resp = requests.get(url, params=params, headers=headers)
         if resp.ok:
             data = resp.json()
             yachts = data.get("yacht_names", [])
@@ -42,7 +43,7 @@ def fetch_sailamor_yachts(platform_name):
         st.error(f"fetch_sailamor_yachts hatası: {e}")
 
 
-def fetch_sailamor_periods(platform_name):
+def fetch_sailamor_periods(platform_name, headers):
     """
     Bizim tekne seçimi değiştiğinde otomatik tetiklenecek.
     /sailamor/yachts/periods endpoint'ine gidip period listesini çeker.
@@ -63,7 +64,7 @@ def fetch_sailamor_periods(platform_name):
     }
 
     try:
-        resp = requests.get(url, params=params)
+        resp = requests.get(url, params=params, headers=headers)
         if resp.ok:
             data = resp.json()
             periods = data.get("periods", [])
@@ -79,7 +80,7 @@ def fetch_sailamor_periods(platform_name):
         st.error(f"fetch_sailamor_periods hatası: {e}")
 
 
-def fetch_competitor_yachts(platform_name):
+def fetch_competitor_yachts(platform_name, headers):
     """
     Rakip firma veya period seçimi değiştiğinde otomatik tetiklenecek.
     Seçili period'a göre rakipte aynı period'a sahip yacht_name'leri çeker.
@@ -103,7 +104,7 @@ def fetch_competitor_yachts(platform_name):
     }
 
     try:
-        resp = requests.get(url, params=params)
+        resp = requests.get(url, params=params, headers=headers)
         if resp.ok:
             data = resp.json()
             c_yachts = data.get("yacht_names", [])
@@ -166,7 +167,7 @@ def parse_discounted_price(price_str):
         return 0.0
 
 
-def compare_prices(platform_name):
+def compare_prices(platform_name, headers):
     """
     "Fiyat Karşılaştır" butonuna basıldığında çağrılır.
     1) Bizim Tekne -> /sailamor/yachts/all_periods
@@ -193,7 +194,7 @@ def compare_prices(platform_name):
         "date_str": date_str,
         "yacht_name": st.session_state["selected_yacht"]
     }
-    resp_our = requests.get(url_our, params=params_our)
+    resp_our = requests.get(url_our, params=params_our, headers=headers)
     if not resp_our.ok:
         st.error("Bizim firmada all_periods verisi alınamadı: " + resp_our.text)
         return
@@ -208,7 +209,7 @@ def compare_prices(platform_name):
         "date_str": date_str,
         "yacht_name": st.session_state["selected_competitor_yacht"]
     }
-    resp_comp = requests.get(url_comp, params=params_comp)
+    resp_comp = requests.get(url_comp, params=params_comp, headers=headers)
     if not resp_comp.ok:
         st.error("Rakip firmada all_periods verisi alınamadı: " + resp_comp.text)
         return
@@ -318,7 +319,7 @@ def start_bot(platform_name):
     """Start the bot and check/update data"""
     try:
         response = requests.post(
-            f"{API_URL}/api/bot/start",
+            f"{API_URL}/api/v1/bot/start",
             headers={"Authorization": f"Bearer {st.session_state['token']}"}
         )
         if response.ok:
@@ -349,6 +350,9 @@ def stop_bot(platform_name):
 
 
 def render_platform_page(platform_name):
+    headers = {
+        "Authorization": f"Bearer {st.session_state['token']}"
+    }
     st.title(f"{platform_name} Fiyat Takip Sistemi")
 
     # Bot Kontrolü
@@ -371,7 +375,7 @@ def render_platform_page(platform_name):
             label="Tarih",
             value=st.session_state["selected_date"],
             key="selected_date",
-            on_change=lambda: fetch_sailamor_yachts(str(platform_name).lower())
+            on_change=lambda: fetch_sailamor_yachts(str(platform_name).lower(),headers)
             # Tarih değişince direkt bu fonksiyon çağrılacak
         )
     # 2) Bizim Tekne Seçimi
@@ -388,7 +392,7 @@ def render_platform_page(platform_name):
             "Rakip Firma",
             options=["Seçiniz"] + st.session_state["competitor_list"],
             key="selected_competitor",
-            on_change=lambda: fetch_competitor_yachts(str(platform_name).lower())
+            on_change=lambda: fetch_competitor_yachts(str(platform_name).lower(),headers)
         )
 
     # 4) Rakip Tekne Seçimi (değiştiğinde belki başka işlem yapacaksanız on_change ekleyebilirsiniz)
@@ -399,7 +403,7 @@ def render_platform_page(platform_name):
             key="selected_competitor_yacht",
         )
 
-    compare_prices(platform_name)
+    compare_prices(platform_name,headers)
 
 
 def login_page():
@@ -447,13 +451,25 @@ def login_page():
     password = st.text_input("Şifre", type="password", value=TEST_USER["password"])
 
     if st.button("Giriş Yap"):
-        # Backend bağlantısı olmadığı için test kullanıcı kontrolü
-        if email == TEST_USER["email"] and password == TEST_USER["password"]:
-            st.session_state["token"] = "test_token_123"  # Dummy token
-            st.session_state["is_logged_in"] = True
-            st.rerun()
-        else:
-            st.error("Geçersiz email veya şifre!")
+        # 1) /login endpoint'ine POST isteği at
+        login_data = {
+            "username": email,
+            "password": password
+        }
+        try:
+            resp = requests.post(f"{API_BASE}/login", json=login_data)
+            if resp.status_code == 200:
+                # 2) Yanıtı parse et
+                data = resp.json()  # { "access_token": "...", "token_type": "bearer" }
+                token = data["access_token"]
+                st.session_state["token"] = token
+                st.session_state["is_logged_in"] = True
+                st.experimental_rerun()
+            else:
+                # 401 veya başka hata
+                st.error(f"Giriş başarısız: {resp.text}")
+        except Exception as e:
+            st.error(f"Sunucu hatası: {e}")
 
     # Test bilgilerini göster
     st.markdown(

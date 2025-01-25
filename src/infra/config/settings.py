@@ -17,7 +17,7 @@ MONGO_USERNAME: Optional[str] = config('MONGO_USERNAME', cast=str, default='')
 MONGO_PASSWORD: Optional[str] = config('MONGO_PASSWORD', cast=str, default='')
 
 # Authentication settings
-ADMIN_USERNAME: str = "admin"
+ADMIN_USERNAME: str = "admin@boattracker.com"
 ADMIN_PASSWORD: str = "admin123"
 JWT_SECRET_KEY: str = "your-super-secret-key-here"
 JWT_EXPIRE_MINUTES: int = 1440
