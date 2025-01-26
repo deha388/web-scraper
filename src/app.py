@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from src.api.routes import auth, bot, sailamor, competitor
+from src.api.routes import auth, bot, price, competitor
 from src.infra.config.settings import MONGO_IP, MONGO_PORT, MONGO_DB, MONGO_USERNAME, MONGO_PASSWORD
 from src.infra.config.database import config
 from src.infra.config.init_database import init_database
 from src.api.controllers.bot_controller import BotController
+from fastapi.middleware.cors import CORSMiddleware
+from src.origins import get_origins
 import logging
 
 # Configure logging
@@ -21,7 +23,6 @@ PREFIX = "/api/v1"
 async def lifespan(app: FastAPI):
     # Startup
     try:
-        # Initialize database
         db = init_database()
         app.state.db = db
         app.state.bot_controller = BotController(db)
@@ -56,10 +57,12 @@ def create_app():
     config.database_url = database_url
     config.db_session
 
+    app.add_middleware(CORSMiddleware, allow_origins=get_origins(), allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
     # Include routers with prefix
     app.include_router(auth.router, prefix=PREFIX, tags=['Authentication'])
     app.include_router(bot.router, prefix=PREFIX, tags=['Bot Control'])
-    app.include_router(sailamor.router, prefix=PREFIX, tags=['Sailamor'])
+    app.include_router(price.router, prefix=PREFIX, tags=['Price'])
     app.include_router(competitor.router, prefix=PREFIX, tags=['Competitor'])
 
     return app

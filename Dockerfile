@@ -1,27 +1,48 @@
-FROM python:3.11
+# Building stage
+FROM python:3.11-slim as build-env
 
-# Chrome ve gerekli bağımlılıkları kur
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    unzip \
-    xvfb \
-    libxi6 \
-    libgconf-2-4 \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends cmake git protobuf-compiler build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
-# Çalışma dizinini oluştur
+# Set work directory
 WORKDIR /app
 
-# Python bağımlılıklarını kopyala ve kur
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy and install dependencies
+COPY requirements.txt ./
+RUN pip install --upgrade pip
+RUN pip install --prefix=/install -r requirements.txt
 
-# Uygulama kodunu kopyala
-COPY src/ ./src/
+# Create runtime stage
+FROM python:3.11-slim
 
-# Uygulamayı çalıştır
-CMD ["python", "src/main.py"] 
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd --gid 10000 app && \
+    useradd --uid 10000 --gid app --home /app app
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/usr/local/lib/python3.11/site-packages
+
+# Copy installed packages from build-env
+COPY --from=build-env /install /usr/local
+
+# Copy application code
+COPY . /app
+WORKDIR /app
+
+# Set ownership and switch to non-root user
+RUN chown -R app:app /app
+USER app
+
+# Expose the application port
+EXPOSE 6006
+
+# Define the entrypoint
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "6006", "--timeout-keep-alive", "600"]

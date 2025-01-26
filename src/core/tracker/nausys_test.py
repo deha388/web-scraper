@@ -47,7 +47,8 @@ class NausysTracker_test(BaseTracker):
             self.driver.get(self.base_url)
             self.logger.info("Login form elementleri bekleniyor...")
 
-            username = WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']")))
+            username = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']")))
             password = self.driver.find_element(By.CSS_SELECTOR, "input[type='password']")
 
             self.logger.info("Kullanıcı bilgileri giriliyor...")
@@ -57,7 +58,8 @@ class NausysTracker_test(BaseTracker):
             username.send_keys("user@SAAMO")
             password.send_keys("sail1234")
 
-            login_button = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+            login_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
             login_button.click()
 
             WebDriverWait(self.driver, 10).until(
@@ -139,7 +141,7 @@ class NausysTracker_test(BaseTracker):
 
     def get_yacht_ids_from_page(self) -> list:
         try:
-            yacht_ids = []
+            yacht_ids = {}
             yacht_rows = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_all_elements_located((By.CLASS_NAME, "YachtRow"))
             )
@@ -150,8 +152,10 @@ class NausysTracker_test(BaseTracker):
                     row_body = row.find_element(By.CSS_SELECTOR, "[id^='y-']")
                     row_id = row_body.get_attribute('id')
                     yacht_id_match = re.search(r'y-(\d+)-', row_id)
+                    yacht_name_element = row.find_element(By.CSS_SELECTOR, ".yachtName")
+                    yacht_name = yacht_name_element.text.strip()
                     if yacht_id_match:
-                        yacht_ids.append(yacht_id_match.group(1))
+                        yacht_ids[yacht_name] = yacht_id_match.group(1)
                 except Exception as row_error:
                     self.logger.error(f"YachtRow işleme hatası: {str(row_error)}")
                     continue
@@ -219,16 +223,16 @@ class NausysTracker_test(BaseTracker):
             cookies = {
                 "JSESSIONID": jsessionid,
                 "nult": nult,
-                "bls_53243141": bls
+                "bls_5324314": bls
             }
+
             params = [
                 ("YachtReservationId", "-1"),
                 ("action", "newFromBookingList"),
                 ("displayAndEdit", "true"),
                 ("yachtReservationParams", yacht_id),
-                #ToDo: Buradaki tarihler dinamik olmalı
-                ("yachtReservationParams", "12.04.2025 17:00"),#period_from
-                ("yachtReservationParams", "19.04.2025 08:00"),#period_to
+                ("yachtReservationParams", self.format_date_for_api(period_from)),
+                ("yachtReservationParams", self.format_date_for_api(period_to)),
                 ("yachtReservationParams", "true"),
                 ("yachtReservationParams", ""),
                 ("yachtReservationParams", ""),
@@ -237,6 +241,7 @@ class NausysTracker_test(BaseTracker):
             ]
 
             resp = requests.get(url, headers=headers, cookies=cookies, params=params)
+            print(resp)
             if not resp.ok:
                 self.logger.error(f"API isteği başarısız: {resp.status_code}")
                 return None
@@ -314,6 +319,10 @@ class NausysTracker_test(BaseTracker):
 
             self.logger.info(f"\nFirma: {competitor_name}, Yat IDs: {yacht_ids}")
 
+            if not isinstance(yacht_ids, dict):
+                self.logger.warning(f"{competitor_name} için yacht_ids sözlük değil, atlanıyor.")
+                continue
+
             competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
             if not competitor_doc:
                 self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
@@ -325,11 +334,11 @@ class NausysTracker_test(BaseTracker):
                 self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
                 continue
 
-            self.go_to_booking_list_page()
-            self.select_charter_company_and_search(search_text, click_text)
-            time.sleep(2)
+            # self.go_to_booking_list_page()
+            # self.select_charter_company_and_search(search_text, click_text)
+            # time.sleep(2)
 
-            for yid in yacht_ids:
+            for yid in yacht_ids.values():
                 self.logger.info(f"-- Yat ID: {yid}")
                 doc = {
                     "yacht_id": yid,
@@ -355,20 +364,34 @@ class NausysTracker_test(BaseTracker):
 
         self.logger.info("Tüm rakipler için data toplama işlemi tamamlandı.")
 
+    @staticmethod
+    def format_date_for_api(date_str):
+        """
+        Tarih formatını API'ye uygun hale getirir.
+        Giriş formatı: '2025-06-21 17:00:00'
+        Çıkış formatı: '21.06.2025 17:00'
+        """
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%d.%m.%Y %H:%M")
+        except ValueError as e:
+            print(f"Tarih formatlama hatası: {e}")
+            return date_str
+
 
 async def test_nausys_bot():
     logging.basicConfig(level=logging.INFO)
     bot = NausysTracker_test()
     bot.setup_driver()
     try:
+        #await bot.scrape_yacht_ids_and_save(competitor_name="rudder", company_search_text="rudder", company_click_text="rudder&moor")
         await bot.collect_data_and_save()
         logging.info("Tüm işlem tamamlandı.")
     except Exception as e:
         logging.error(f"Test sırasında hata oluştu: {str(e)}")
     finally:
         time.sleep(3)
-        if bot.driver:
-            bot.driver.quit()
+
 
 if __name__ == "__main__":
     asyncio.run(test_nausys_bot())

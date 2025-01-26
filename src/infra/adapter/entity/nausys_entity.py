@@ -25,5 +25,5 @@ class BookingPeriod(BaseModel):
 class DailyBookingData(BaseModel):
     competitor: str
     yacht_id: str
-    last_update_date: date
+    last_update_date: datetime
     booking_periods: List[BookingPeriod]

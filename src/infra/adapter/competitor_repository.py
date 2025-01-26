@@ -1,9 +1,8 @@
-# src/infra/adapter/competitor_repository.py
-
 from typing import Any, Dict, List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.infra.adapter.base_repository import BaseRepository
+
 
 class CompetitorRepository(BaseRepository):
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -13,7 +12,7 @@ class CompetitorRepository(BaseRepository):
     async def upsert_competitor_info(
         self,
         competitor_name: str,
-        yacht_ids: List[str],
+        yacht_ids: Dict[str, str],
         search_text: str,
         click_text: str
     ):
