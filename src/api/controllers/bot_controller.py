@@ -22,23 +22,16 @@ class BotInstance:
 
 class BotController:
     def __init__(self, db=None):
-        # Projenizde "db" parametresini kullanıyorsanız,
-        # app.state.db vs. ile gelebilir. Gerekmezse init_database() yapabilirsiniz.
         if db is None:
             db = init_database()
         self.db = db
 
         self.bots: Dict[BotType, BotInstance] = {
             BotType.NAUSYS: BotInstance(),
-            BotType.MMK: BotInstance()  # ileride başka bot ekleyebilirsiniz
+            BotType.MMK: BotInstance()
         }
 
     async def start_bot(self, bot_type: BotType, interval_minutes: int = 60) -> BotStatusResponse:
-        """
-        Botu başlat:
-         - Hemen bir kere collect_data_and_save (eksik varsa doldursun)
-         - Sonra her gece 00:00'da da tekrarla
-        """
         bot_instance = self.bots[bot_type]
         if bot_instance.status == BotStatus.RUNNING:
             return BotStatusResponse(
@@ -49,13 +42,11 @@ class BotController:
                 next_run=bot_instance.next_run
             )
 
-        # Başlatırken ilk çekim:
         tracker = NausysTracker()
         tracker.setup_driver()
         await tracker.collect_data_and_save()
         tracker.driver.quit()
 
-        # Ardından RUNNING mod + gece 00:00 döngüsü
         bot_instance.status = BotStatus.RUNNING
         bot_instance.message = f"Bot started. Will run daily at 00:00"
         bot_instance.task = asyncio.create_task(self.run_nausys_daily(bot_type))
@@ -69,9 +60,6 @@ class BotController:
         )
 
     async def run_nausys_daily(self, bot_type: BotType):
-        """
-        Arkaplan döngü: Her gece 00:00'da collect_data_and_save tetikler.
-        """
         bot_instance = self.bots[bot_type]
         while bot_instance.status == BotStatus.RUNNING:
             now = datetime.now()

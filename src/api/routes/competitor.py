@@ -37,14 +37,7 @@ async def create_or_update_competitor(
         req: CompetitorCreateRequest,
         current_user: str = Depends(get_current_user),
 ):
-    """
-    Rakip ekleme/güncelleme endpointi:
-    - Selenium ile firmayı filtreler
-    - Yat ID'lerini bulur
-    - DB'ye kaydeder (search_text, click_text, yacht_ids).
-    """
     logger.info(f"Rakip ekleme/güncelleme tetiklendi: {req}")
-
     bot = NausysTracker()
     bot.setup_driver()
     try:

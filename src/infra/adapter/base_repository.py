@@ -26,7 +26,7 @@ class BaseRepository:
         return results
 
     async def update_one(self, collection_name: str, query: Dict[str, Any], update_data: Dict[str, Any]):
-        result = await self._db[collection_name].update_one(query, {'$set': update_data})
+        result = await self._db[collection_name].update_one(query, update_data)
         return result.modified_count
 
     async def delete_one(self, collection_name: str, query: Dict[str, Any]):

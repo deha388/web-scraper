@@ -1,11 +1,9 @@
 import streamlit as st
-import plotly.express as px
-from datetime import datetime, timedelta
-from mock_data import generate_mock_prices, get_mock_boats
+
 import pandas as pd
 import requests
 from config import API_URL, TEST_USER
-from datetime import datetime, date
+from datetime import date
 
 API_BASE = "http://localhost:8000/api/v1"
 API_SAILAMOR = "http://localhost:8000/api/v1/sailamor"
@@ -13,12 +11,6 @@ API_COMPETITOR = "http://localhost:8000/api/v1/competitor"
 
 
 def fetch_sailamor_yachts(platform_name, headers):
-    """
-    Tarih değiştiğinde otomatik tetiklenecek.
-    Seçilen tarihe göre /sailamor/yachts/names?date_str=... endpoint'inden
-    tekneleri çekip st.session_state["our_yacht_list"] içine koyar.
-    Diğer seçimleri sıfırlar.
-    """
     date_str = st.session_state["selected_date"].strftime("%Y-%m-%d")
     url = f"{API_SAILAMOR}/yachts/names"
     params = {"platform": str(platform_name).lower(), "date_str": date_str}

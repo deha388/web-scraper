@@ -1,11 +1,12 @@
-from pydantic import BaseModel
 from typing import Optional, List
+from datetime import date, datetime
+from pydantic import BaseModel
 
 
 class PriceInfo(BaseModel):
     discounted_price: str
     original_price: str
-    discount_percentage: Optional[str]
+    discount_percentage: Optional[str] = None
 
 
 class BookingDetail(BaseModel):
@@ -16,11 +17,13 @@ class BookingDetail(BaseModel):
 
 
 class BookingPeriod(BaseModel):
-    period_from: str
-    period_to: str
+    period_from: datetime
+    period_to: datetime
     details: List[BookingDetail]
 
 
-class CompanyResult(BaseModel):
+class DailyBookingData(BaseModel):
+    competitor: str
     yacht_id: str
+    last_update_date: date
     booking_periods: List[BookingPeriod]
