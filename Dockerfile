@@ -42,7 +42,7 @@ RUN chown -R app:app /app
 USER app
 
 # Expose the application port
-EXPOSE 6006
+EXPOSE 8000
 
 # Define the entrypoint
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "6006", "--timeout-keep-alive", "600"]
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "600"]
