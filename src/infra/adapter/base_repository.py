@@ -16,6 +16,7 @@ class BaseRepository:
 
     async def find_one(self, collection_name: str, query: Dict[str, Any]) -> Dict[str, Any]:
         doc = await self._db[collection_name].find_one(query)
+        print(doc)
         return doc
 
     async def find_many(self, collection_name: str, query: Dict[str, Any]) -> List[Dict[str, Any]]:

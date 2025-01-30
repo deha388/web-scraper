@@ -161,5 +161,4 @@ async def compare_prices(
             "durum": durum
         })
 
-    print(result_table)
     return result_table

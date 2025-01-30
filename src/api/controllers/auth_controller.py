@@ -7,8 +7,6 @@ from src.infra.config import settings
 class AuthController:
     @staticmethod
     async def login(request: LoginRequest) -> LoginResponse:
-        print(request.username)
-        print(request.password)
         if request.username == settings.ADMIN_USERNAME and request.password == settings.ADMIN_PASSWORD:
             token = create_access_token({"sub": request.username})
             return LoginResponse(access_token=token)

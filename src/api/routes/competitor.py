@@ -102,6 +102,7 @@ async def get_competitor_yacht_names(
         if not competitor_doc:
             raise HTTPException(status_code=404, detail=f"{competitor_name} bulunamadı.")
         yacht_ids: Dict[str, str] = competitor_doc.get("yacht_ids", {})
+        print(yacht_ids)
         yachts_list = [{"name": yname, "id": yid} for yname, yid in yacht_ids.items()]
         return {"yachts": yachts_list}
     else:

@@ -12,6 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
+from src.infra.config.config import COMPETITORS
 from src.infra.config.init_database import init_database
 from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.adapter.booking_data_repository import BookingDataRepository
@@ -241,7 +242,6 @@ class NausysTracker_test(BaseTracker):
             ]
 
             resp = requests.get(url, headers=headers, cookies=cookies, params=params)
-            print(resp)
             if not resp.ok:
                 self.logger.error(f"API isteği başarısız: {resp.status_code}")
                 return None
@@ -302,42 +302,42 @@ class NausysTracker_test(BaseTracker):
 
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
-        comp_repo = CompetitorRepository(database)
+        #comp_repo = CompetitorRepository(database)
         book_repo = BookingDataRepository(database)
 
-        all_competitors = await comp_repo.get_all_competitors_and_yacht_ids()
-        if not all_competitors:
-            self.logger.info("Hiç rakip bulunamadı, işlem yapılmıyor.")
-            return
+        # all_competitors = await comp_repo.get_all_competitors_and_yacht_ids()
+        # if not all_competitors:
+        #     self.logger.info("Hiç rakip bulunamadı, işlem yapılmıyor.")
+        #     return
 
         date_ranges = self.generate_weekly_dates()
         self.logger.info(f"Toplam {len(date_ranges)} haftalık periyot üretildi.")
 
-        for competitor_name, yacht_ids in all_competitors.items():
+        for competitor_name, yacht_ids in COMPETITORS.items():
             if not yacht_ids:
                 continue
 
             self.logger.info(f"\nFirma: {competitor_name}, Yat IDs: {yacht_ids}")
 
-            if not isinstance(yacht_ids, dict):
-                self.logger.warning(f"{competitor_name} için yacht_ids sözlük değil, atlanıyor.")
-                continue
-
-            competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
-            if not competitor_doc:
-                self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
-                continue
-
-            search_text = competitor_doc.get("search_text", "")
-            click_text = competitor_doc.get("click_text", "")
-            if not search_text or not click_text:
-                self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
-                continue
+            # if not isinstance(yacht_ids, dict):
+            #     self.logger.warning(f"{competitor_name} için yacht_ids sözlük değil, atlanıyor.")
+            #     continue
+            #
+            # competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
+            # if not competitor_doc:
+            #     self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
+            #     continue
+            #
+            # search_text = competitor_doc.get("search_text", "")
+            # click_text = competitor_doc.get("click_text", "")
+            # if not search_text or not click_text:
+            #     self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
+            #     continue
 
             # self.go_to_booking_list_page()
             # self.select_charter_company_and_search(search_text, click_text)
             # time.sleep(2)
-
+            yacht_ids = yacht_ids.get("yacht_ids", {})
             for yid in yacht_ids.values():
                 self.logger.info(f"-- Yat ID: {yid}")
                 doc = {
@@ -366,11 +366,6 @@ class NausysTracker_test(BaseTracker):
 
     @staticmethod
     def format_date_for_api(date_str):
-        """
-        Tarih formatını API'ye uygun hale getirir.
-        Giriş formatı: '2025-06-21 17:00:00'
-        Çıkış formatı: '21.06.2025 17:00'
-        """
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
             return dt.strftime("%d.%m.%Y %H:%M")
