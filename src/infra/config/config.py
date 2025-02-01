@@ -2,11 +2,11 @@ COMPETITORS = {
     "sailamor": {
         "competitor_name": "sailamor",
         "yacht_ids": {
-            "athena": "52110487",
-            "milas": "52110484",
-            "anatolia": "52110486",
-            "test": "52071436",
-            "last": "52110483"
+            "Athena 5": "52110487",
+            "Athena 2": "52110484",
+            "Athena 4": "52110486",
+            "Moana": "52071436",
+            "Moana 2": "52110483"
         },
         "search_text": "Sailamor",
         "click_text": "Sailamor"

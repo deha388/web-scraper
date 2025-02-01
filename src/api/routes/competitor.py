@@ -7,6 +7,7 @@ from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.config.init_database import init_database
 from src.core.auth.jwt_handler import get_current_user
 from src.api.controllers.bot_controller import BotController
+from src.infra.config.config import COMPETITORS
 from src.api.dto.bot_dto import BotStatus, BotType
 
 router = APIRouter()
@@ -92,28 +93,26 @@ async def create_or_update_competitor(
 
 @router.get("/competitor/yachts/names")
 async def get_competitor_yacht_names(
-    competitor_name: Optional[str] = Query(None, description="Rakip ismi (opsiyonel). Örn 'sailamor'"),
-    current_user: str = Depends(get_current_user),
-    comp_repo: CompetitorRepository = Depends(get_competitor_repo)
+    competitor_name: Optional[str] = Query(
+        None, description="Rakip ismi (opsiyonel). Örn 'sailamor'"
+    ),
+    current_user: str = Depends(get_current_user)
 ):
-
+    # DB'ye gitmeden, sabit config dosyasında tanımlı COMPETITORS üzerinden çalışıyoruz.
     if competitor_name:
-        competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
+        competitor_doc = COMPETITORS.get(competitor_name)
         if not competitor_doc:
             raise HTTPException(status_code=404, detail=f"{competitor_name} bulunamadı.")
         yacht_ids: Dict[str, str] = competitor_doc.get("yacht_ids", {})
-        print(yacht_ids)
         yachts_list = [{"name": yname, "id": yid} for yname, yid in yacht_ids.items()]
         return {"yachts": yachts_list}
     else:
-        all_docs = await comp_repo.find_many(comp_repo.collection_name, {})
         result = []
-        for doc in all_docs:
-            c_name = doc.get("competitor_name")
-            y_ids = doc.get("yacht_ids", {})
-            yachts_list = [{"name": yname, "id": yid} for yname, yid in y_ids.items()]
+        for comp_name, comp_data in COMPETITORS.items():
+            yacht_ids = comp_data.get("yacht_ids", {})
+            yachts_list = [{"name": yname, "id": yid} for yname, yid in yacht_ids.items()]
             result.append({
-                "competitor_name": c_name,
+                "competitor_name": comp_name,
                 "yachts": yachts_list
             })
         return result
@@ -121,24 +120,19 @@ async def get_competitor_yacht_names(
 
 @router.get("/competitor/yachts/details")
 async def get_competitor_details(
-    competitor_name: Optional[str] = Query(None, description="Rakip ismi (opsiyonel)."),
-    current_user: str = Depends(get_current_user),
-    comp_repo: CompetitorRepository = Depends(get_competitor_repo)
+    competitor_name: Optional[str] = Query(
+        None, description="Rakip ismi (opsiyonel)."
+    ),
+    current_user: str = Depends(get_current_user)
 ):
     """
-    Rakip ismi verilirse tek doküman,
-    verilmezse tüm rakip dokümanlarını getirir.
+    Eğer rakip ismi verilmişse ilgili rakibin dokümanını,
+    verilmemişse tüm rakip dokümanlarını döner.
     """
     if competitor_name:
-        competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
+        competitor_doc = COMPETITORS.get(competitor_name)
         if not competitor_doc:
             raise HTTPException(status_code=404, detail=f"{competitor_name} bulunamadı.")
-        if "_id" in competitor_doc:
-            competitor_doc["_id"] = str(competitor_doc["_id"])
         return competitor_doc
     else:
-        all_docs = await comp_repo.find_many(comp_repo.collection_name, {})
-        for doc in all_docs:
-            if "_id" in doc:
-                doc["_id"] = str(doc["_id"])
-        return all_docs
+        return list(COMPETITORS.values())
