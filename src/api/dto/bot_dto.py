@@ -15,13 +15,10 @@ class BotType(str, Enum):
     MMK = "mmk"
 
 
-class BotIntervalRequest(BaseModel):
-    interval_minutes: Optional[int] = 60  # Default to run every hour
-
-
 class BotStatusResponse(BaseModel):
     bot_type: BotType
     status: BotStatus
     message: str
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
+    bot_last_started: Optional[datetime] = None
