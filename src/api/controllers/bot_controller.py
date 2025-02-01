@@ -5,7 +5,7 @@ from typing import Optional, Dict
 from src.infra.config.init_database import init_database
 from src.api.dto.bot_dto import BotStatus, BotType, BotStatusResponse
 
-from src.core.tracker.nausys_test import NausysTracker_test
+from src.core.tracker.nausys_tracker import NausysTracker
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class BotInstance:
         self.next_run: Optional[datetime] = None
         self.task: Optional[asyncio.Task] = None
         self.message: str = ""
-        self.tracker: Optional[NausysTracker_test] = None
+        self.tracker: Optional[NausysTracker] = None
 
 
 class BotController:
@@ -42,7 +42,7 @@ class BotController:
         bot_instance.status = BotStatus.RUNNING
         bot_instance.message = "Bot started. Will run daily at 00:00."
         if bot_instance.tracker is None:
-            bot_instance.tracker = NausysTracker_test()
+            bot_instance.tracker = NausysTracker()
             bot_instance.tracker.setup_driver()
             success = bot_instance.tracker.login()
             if not success:

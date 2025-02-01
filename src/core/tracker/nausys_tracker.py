@@ -1,13 +1,10 @@
-# src/core/tracker/nausys_tracker.py
-
 import asyncio
 import time
 import logging
 import requests
 import re
-
-from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from lxml import html
+from datetime import datetime, timedelta, date
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,8 +12,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
+from src.infra.config.config import COMPETITORS
 from src.infra.config.init_database import init_database
-from src.infra.adapter.nausys_repository import NausysRepository
+from src.infra.adapter.competitor_repository import CompetitorRepository
+from src.infra.adapter.booking_data_repository import BookingDataRepository
+from src.infra.adapter.update_log_repository import UpdateLogRepository
 
 
 class BaseTracker:
@@ -25,15 +25,6 @@ class BaseTracker:
 
 
 class NausysTracker(BaseTracker):
-    """
-    - scrape_yacht_ids_and_save:
-        Rakip ismi + search_text + click_text -> Nausys'te firma filtreler, ID'leri okur.
-        DB'ye competitor kaydı (yacht_ids, search_text, click_text).
-    - collect_data_and_save:
-        DB'de bugüne ait verisi eksik olan rakipleri bulur,
-        her biri için sayfada filtre uygular -> fetch_booking_details -> kaydeder.
-    """
-
     def __init__(self):
         super().__init__()
         self.base_url = "https://agency.nausys.com"
@@ -42,9 +33,6 @@ class NausysTracker(BaseTracker):
         self.logged_in = False
         self.db_conf = init_database()
 
-    # ------------------------------------------------------------------------------
-    # Selenium Setup / Login
-    # ------------------------------------------------------------------------------
     def setup_driver(self):
         self.logger.info("Driver kurulumu başlıyor...")
         service = Service(ChromeDriverManager().install())
@@ -70,7 +58,6 @@ class NausysTracker(BaseTracker):
             username.clear()
             password.clear()
 
-            # Gerçek kullanıcı / şifre
             username.send_keys("user@SAAMO")
             password.send_keys("sail1234")
 
@@ -106,9 +93,6 @@ class NausysTracker(BaseTracker):
             self.logger.error(f"Booking list sayfasına giderken hata oluştu: {str(e)}")
             raise
 
-    # ------------------------------------------------------------------------------
-    # 1) Scraping Metotları
-    # ------------------------------------------------------------------------------
     def select_autocomplete_item(self, input_css, panel_css, text_to_type, text_to_click):
         try:
             input_box = WebDriverWait(self.driver, 10).until(
@@ -161,9 +145,9 @@ class NausysTracker(BaseTracker):
             self.logger.error(f"Charter firma seçerken hata: {str(e)}")
             raise
 
-    def get_yacht_ids_from_page(self) -> list:
+    def get_yacht_ids_from_page(self) -> dict:
         try:
-            yacht_ids = []
+            yacht_ids = {}
             yacht_rows = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_all_elements_located((By.CLASS_NAME, "YachtRow"))
             )
@@ -174,8 +158,10 @@ class NausysTracker(BaseTracker):
                     row_body = row.find_element(By.CSS_SELECTOR, "[id^='y-']")
                     row_id = row_body.get_attribute('id')
                     yacht_id_match = re.search(r'y-(\d+)-', row_id)
+                    yacht_name_element = row.find_element(By.CSS_SELECTOR, ".yachtName")
+                    yacht_name = yacht_name_element.text.strip()
                     if yacht_id_match:
-                        yacht_ids.append(yacht_id_match.group(1))
+                        yacht_ids[yacht_name] = yacht_id_match.group(1)
                 except Exception as row_error:
                     self.logger.error(f"YachtRow işleme hatası: {str(row_error)}")
                     continue
@@ -183,21 +169,9 @@ class NausysTracker(BaseTracker):
             return yacht_ids
         except Exception as e:
             self.logger.error(f"Yacht ID'leri alınırken hata: {str(e)}")
-            return []
+            return {}
 
-    async def scrape_yacht_ids_and_save(
-        self,
-        competitor_name: str,
-        company_search_text: str,
-        company_click_text: str
-    ):
-        """
-        1) Selenium login + bookingList
-        2) Firma filtre (company_search_text, company_click_text)
-        3) Yat ID'lerini çek
-        4) DB'ye upsert_competitor_info (competitor_name, yacht_ids, search_text, click_text)
-        """
-
+    async def scrape_yacht_ids_and_save(self, competitor_name: str, company_search_text: str, company_click_text: str):
         self.logger.info(f"Scrape süreci başlatıldı: '{company_search_text}' / '{company_click_text}'")
         if not self.logged_in:
             if not self.login():
@@ -206,15 +180,14 @@ class NausysTracker(BaseTracker):
 
         self.go_to_booking_list_page()
         self.select_charter_company_and_search(company_search_text, company_click_text)
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         yacht_ids = self.get_yacht_ids_from_page()
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
-        nausys_repo = NausysRepository(database)
 
-        # Rakip bilgileri + Search/Click text upsert
-        await nausys_repo.upsert_competitor_info(
+        comp_repo = CompetitorRepository(database)
+        await comp_repo.upsert_competitor_info(
             competitor_name=competitor_name,
             yacht_ids=yacht_ids,
             search_text=company_search_text,
@@ -224,116 +197,91 @@ class NausysTracker(BaseTracker):
         self.logger.info(f"[{competitor_name}] Çekilen YACHT ID'leri DB'ye kaydedildi: {yacht_ids}")
         return yacht_ids
 
-    # ------------------------------------------------------------------------------
-    # 2) Booking Data Çekme (Requests)
-    # ------------------------------------------------------------------------------
     def get_session_data(self):
         try:
             cookies = self.driver.get_cookies()
             jsessionid = next((c['value'] for c in cookies if c['name'] == 'JSESSIONID'), None)
+            nult = next((c['value'] for c in cookies if c['name'] == 'nult'), None)
+            bls = next((c['value'] for c in cookies if c['name'] == 'bls_53243141'), None)
+
             view_state = self.driver.execute_script("""
                 return document.querySelector('input[name="javax.faces.ViewState"]').value;
             """)
-            return jsessionid, view_state
+            return jsessionid, view_state, nult, bls
         except Exception as e:
             self.logger.error(f"Session data alma hatası: {str(e)}")
-            return None, None
+            return None, None, None, None
 
     def fetch_booking_details(self, yacht_id, period_from, period_to):
-        """
-        Partial AJAX isteği ile (yacht_id, period_from, period_to) booking data.
-        """
         try:
-            jsessionid, view_state = self.get_session_data()
-            if not jsessionid or not view_state:
+            jsessionid, view_state, nult, bls = self.get_session_data()
+            if not jsessionid or not view_state or not nult:
                 self.logger.error("Session bilgileri alınamadı!")
                 return None
 
-            url = "https://agency.nausys.com/NauSYS-agency/app/bookinglist.xhtml"
+            url = "https://agency.nausys.com/NauSYS-agency/app/yachtReservationDialog.xhtml"
             headers = {
-                "Accept": "application/xml, text/xml, */*; q=0.01",
-                "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "Faces-Request": "partial/ajax",
-                "X-Requested-With": "XMLHttpRequest",
-                "User-Agent": "Mozilla/5.0",
-                "Referer": url
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept-Language": "tr-TR,tr;q=0.9",
+                "Connection": "keep-alive",
             }
-            cookies = {"JSESSIONID": jsessionid}
-            data = {
-                "javax.faces.partial.ajax": "true",
-                "javax.faces.source": "searchResultsForm:dailyBookingListComponent",
-                "javax.faces.partial.execute": "searchResultsForm:dailyBookingListComponent",
-                "javax.faces.partial.render": "searchResultsForm:dailyBookingListComponent",
-                "searchResultsForm:dailyBookingListComponent": "searchResultsForm:dailyBookingListComponent",
-                "action": "fetchBookingDiv",
-                "yachtId": yacht_id,
-                "periodFrom": period_from,
-                "periodTo": period_to,
-                "locationId": "",
-                "reservationType": "free",
-                "menuform": "menuform",
-                "javax.faces.ViewState": view_state
+            cookies = {
+                "JSESSIONID": jsessionid,
+                "nult": nult,
+                "bls_5324314": bls
             }
 
-            resp = requests.post(url, headers=headers, cookies=cookies, data=data)
+            params = [
+                ("YachtReservationId", "-1"),
+                ("action", "newFromBookingList"),
+                ("displayAndEdit", "true"),
+                ("yachtReservationParams", yacht_id),
+                ("yachtReservationParams", self.format_date_for_api(period_from)),
+                ("yachtReservationParams", self.format_date_for_api(period_to)),
+                ("yachtReservationParams", "true"),
+                ("yachtReservationParams", ""),
+                ("yachtReservationParams", ""),
+                ("yachtReservationParams", ""),
+                ("yachtReservationParams", ""),
+            ]
+
+            resp = requests.get(url, headers=headers, cookies=cookies, params=params)
             if not resp.ok:
                 self.logger.error(f"API isteği başarısız: {resp.status_code}")
                 return None
 
-            soup = BeautifulSoup(resp.text, "xml")
-            updates = soup.find_all("update")
-            booking_data = []
-            for upd in updates:
-                if upd.get("id") == "searchResultsForm:dailyBookingListComponent":
-                    cdata_content = upd.string
-                    if cdata_content:
-                        inner_soup = BeautifulSoup(cdata_content, "html.parser")
-                        daily_res_items = inner_soup.find_all("div", class_="dailyRes")
-                        for item in daily_res_items:
-                            basket_cart = item.find("div", class_="addToBasketCart")
-                            onclick_attr = basket_cart.get("onclick", "") if basket_cart else ""
-                            params_str = re.search(r'\((.*?)\)', onclick_attr)
-                            params = [p.strip().strip("'") for p in
-                                      params_str.group(1).split(',')] if params_str else []
+            tree = html.fromstring(resp.content)
+            xpaths = {
+                "discount_name": '//*[@id="yachtReservationDialogForm:tabView:discountGroup:contentTable:0:discountName"]',
+                "yacht_name": '//*[@id="yachtReservationDialogForm:tabView:j_idt109"]',
+                "company_name": '//*[@id="yachtReservationDialogForm:tabView:generalPanel"]/tbody/tr[3]/td[2]/div/div[1]/label',
+                "port_from": '//*[@id="yachtReservationDialogForm:tabView:generalPanel"]/tbody/tr[7]/td[2]/label',
+                "port_to": '//*[@id="yachtReservationDialogForm:tabView:generalPanel"]/tbody/tr[8]/td[2]/label',
+                "deposit": '//*[@id="yachtReservationDialogForm:tabView:generalPanel"]/tbody/tr[10]/td[2]/span[1]',
+                "discount_percent": '//*[@id="yachtReservationDialogForm:tabView:discountGroup:contentTable_data"]/tr/td[5]/span',
+                "list_price": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[1]/td[2]/div/div/span[1]',
+                "discount": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[1]/td[2]/div/div/span[3]/span[1]',
+                "total_price": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[1]/td[2]/div/div/span[4]',
+                "commission_percent": '//*[@id="yachtReservationDialogForm:tabView:commissionPercent"]',
+                "commission": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[2]/td[2]/div/div[2]/span[1]',
+                "client_price": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[4]/td[2]/div/div/span[1]',
+                "agency_price": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[5]/td[2]/div/div/span[1]',
+                "agency_income": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[6]/td[2]/div/div/span[1]',
+                "total_advanced_payment": '//*[@id="yachtReservationDialogForm:tabView:priceCalculationPanelGrid"]/tbody/tr[7]/td[2]/div/div/span[1]',
+            }
 
-                            status_div = item.find("div", class_="dailyRes-status")
-                            status = status_div.get_text(strip=True) if status_div else "N/A"
+            results = {}
+            for key, xp in xpaths.items():
+                elems = tree.xpath(xp)
+                if elems:
+                    text_content = elems[0].text_content().strip()
+                    results[key] = text_content
+                else:
+                    results[key] = None
+                    self.logger.warning(f"{key} isimli bilgi bulunamadı.")
 
-                            bases_div = item.find("div", class_="dailyRes-bases")
-                            location = bases_div.get_text(strip=True) if bases_div else "N/A"
-
-                            price_div = item.find("div", class_="dailyRes-price")
-                            discounted_price = "N/A"
-                            original_price = "N/A"
-                            discount_percentage = None
-
-                            if price_div:
-                                big_price = price_div.find("span", class_="dailyBigPrice")
-                                small_price = price_div.find("span", class_="dailySmallPrice")
-                                if big_price:
-                                    discounted_price = big_price.get_text(strip=True)
-                                if small_price:
-                                    small_price_text = small_price.get_text(strip=True)
-                                    original_price_match = re.search(r'\(([\d.,]+)', small_price_text)
-                                    if original_price_match:
-                                        original_price = f"{original_price_match.group(1)} EUR"
-                                    discount_match = re.search(r'-> (\d+) %', small_price_text)
-                                    if discount_match:
-                                        discount_percentage = f"{discount_match.group(1)}%"
-
-                            booking_info = {
-                                "yacht_name": params[1] if len(params) > 1 else "N/A",
-                                "status": status,
-                                "location": location,
-                                "prices": {
-                                    "discounted_price": discounted_price,
-                                    "original_price": original_price,
-                                    "discount_percentage": discount_percentage
-                                }
-                            }
-                            booking_data.append(booking_info)
-            return booking_data
+            return results
         except Exception as e:
             self.logger.error(f"Booking detayları çekerken hata: {str(e)}")
             return None
@@ -351,17 +299,12 @@ class NausysTracker(BaseTracker):
             current_date += timedelta(days=7)
         return date_pairs
 
-    # ------------------------------------------------------------------------------
-    # 3) Data Toplama (Eksik Rakipler)
-    # ------------------------------------------------------------------------------
     async def collect_data_and_save(self):
         """
-        1) DB'den bugüne dair verisi olmayan rakipleri al (get_competitors_missing_data_for_today)
-        2) Her rakip için:
-             -> go_to_booking_list_page
-             -> select_charter_company_and_search (search_text, click_text)
-             -> fetch_booking_details
-             -> DB'ye kaydet
+        Her rakip için:
+          - Aynı gün güncelleme yapılmış yacht ID’ler repository üzerinden kontrol edilip atlanır.
+          - Tüm rakipler arasında (global) 7 yat ID güncellendikten sonra 1 saat beklenir.
+          - Her güncelleme sonucu (başarılı/hata) UpdateLogRepository aracılığıyla loglanır.
         """
         if not self.logged_in:
             if not self.login():
@@ -370,82 +313,110 @@ class NausysTracker(BaseTracker):
 
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
-        nausys_repo = NausysRepository(database)
 
-        missing_competitors = await nausys_repo.get_competitors_missing_data_for_today()
-        if not missing_competitors:
-            self.logger.info("Hiçbir rakip için bugünün verisi eksik değil. İşlem yapılmıyor.")
-            return
+        # Repository örnekleri
+        # comp_repo = CompetitorRepository(database)  # Gerekirse kullanabilirsiniz
+        book_repo = BookingDataRepository(database)
+        update_log_repo = UpdateLogRepository(database)
 
         date_ranges = self.generate_weekly_dates()
         self.logger.info(f"Toplam {len(date_ranges)} haftalık periyot üretildi.")
 
-        for competitor_name, yacht_ids in missing_competitors.items():
-            self.logger.info(f"\nFirma: {competitor_name}, Yat IDs: {yacht_ids}")
+        # Global güncelleme sayacını başlatıyoruz.
+        total_processed = 0
+        # Günün tarihini datetime olarak tanımlıyoruz (saat kısmı 00:00)
+        today_dt = datetime.combine(date.today(), datetime.min.time())
 
-            competitor_doc = await nausys_repo.get_competitor_doc(competitor_name)
-            if not competitor_doc:
-                self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
+        for competitor_name, competitor_data in COMPETITORS.items():
+            if not competitor_data:
                 continue
 
-            search_text = competitor_doc.get("search_text", "")
-            click_text = competitor_doc.get("click_text", "")
+            self.logger.info(f"\nFirma: {competitor_name}, Veriler: {competitor_data}")
+            yacht_ids_dict = competitor_data.get("yacht_ids", {})
 
-            if not search_text or not click_text:
-                self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
-                continue
+            for yid in yacht_ids_dict.values():
+                # Aynı gün için daha önce bu yacht ID güncellendiyse repository üzerinden kontrol edelim
+                query = {
+                    "competitor": competitor_name,
+                    "yacht_id": yid,
+                    "last_update_date": today_dt
+                }
+                log_entry = await update_log_repo.find_one(update_log_repo.collection_name, query)
+                if log_entry:
+                    self.logger.info(f"Yacht id {yid} zaten güncellendi, atlanıyor.")
+                    continue
 
-            # Sayfaya gidip rakip filtre uygula
-            self.go_to_booking_list_page()
-            self.select_charter_company_and_search(search_text, click_text)
-            time.sleep(2)
+                self.logger.info(f"-- Yat ID: {yid} güncelleniyor.")
+                doc = {
+                    "yacht_id": yid,
+                    "last_update_date": today_dt,
+                    "booking_periods": []
+                }
+                try:
+                    for (p_from, p_to) in date_ranges:
+                        details = self.fetch_booking_details(yid, p_from, p_to)
+                        if details:
+                            doc["booking_periods"].append({
+                                "period_from": p_from,
+                                "period_to": p_to,
+                                "details": [details]
+                            })
+                            self.logger.info(f"  * {p_from} -> {p_to} için veri eklendi.")
+                        else:
+                            self.logger.warning(f"  - {p_from} -> {p_to} için veri bulunamadı.")
+                    await book_repo.save_daily_booking_data(competitor_name, [doc])
+                    await update_log_repo.create_one(update_log_repo.collection_name, {
+                        "competitor": competitor_name,
+                        "yacht_id": yid,
+                        "last_update_date": today_dt,
+                        "status": "success",
+                        "timestamp": datetime.now()
+                    })
+                except Exception as update_err:
+                    self.logger.error(f"Yacht id {yid} güncellenirken hata: {update_err}")
+                    await update_log_repo.create_one(update_log_repo.collection_name, {
+                        "competitor": competitor_name,
+                        "yacht_id": yid,
+                        "last_update_date": today_dt,
+                        "status": "error",
+                        "error": str(update_err),
+                        "timestamp": datetime.now()
+                    })
+                total_processed += 1
+                self.logger.info(f"Toplam güncellenen yat ID sayısı: {total_processed}")
+                # Eğer global olarak 7 yat ID güncellemesi yapıldıysa 1 saat bekle
+                if total_processed % 7 == 0:
+                    self.logger.info("7 yat ID güncellendi. 1 saat bekleniyor...")
+                    await asyncio.sleep(3600)  # 3600 saniye = 1 saat
 
-            # Her Yat ID için, date_ranges'ta fetch -> save
-            for yid in yacht_ids:
-                self.logger.info(f"-- Yat ID: {yid}")
-                for (p_from, p_to) in date_ranges:
-                    details = self.fetch_booking_details(yid, p_from, p_to)
-                    if details:
-                        data_to_insert = {
-                            "yacht_id": yid,
-                            "booking_periods": [
-                                {
-                                    "period_from": p_from,
-                                    "period_to": p_to,
-                                    "details": details
-                                }
-                            ]
-                        }
-                        await nausys_repo.save_booking_data(competitor_name, [data_to_insert])
-                        self.logger.info(f"  * {p_from} -> {p_to} için {len(details)} kayıt kaydedildi.")
-                    else:
-                        self.logger.warning(f"  - {p_from} -> {p_to} için veri bulunamadı.")
+        self.logger.info("Tüm rakipler için data toplama işlemi tamamlandı.")
 
-        self.logger.info("Tüm eksik rakipler için data toplama işlemi tamamlandı.")
+    @staticmethod
+    def format_date_for_api(date_str):
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%d.%m.%Y %H:%M")
+        except ValueError as e:
+            print(f"Tarih formatlama hatası: {e}")
+            return date_str
 
 
-# ---------------------------
-# Test
-# ---------------------------
 async def test_nausys_bot():
     logging.basicConfig(level=logging.INFO)
     bot = NausysTracker()
     bot.setup_driver()
     try:
-        # competitor = "sailamor"
-        # search = "Sailamor"
-        # click = "Sailamor"
-        # yacht_ids = await bot.scrape_yacht_ids_and_save(competitor, search, click)
-        # logging.info(f"\nScrape sonucu Yat ID'leri (kaydedilenler): {yacht_ids}")
-
+        # İsterseniz önce scrape işlemini yapabilir,
+        # veya doğrudan collect_data_and_save() ile güncelleme sürecini başlatabilirsiniz.
+        # Örneğin:
+        # await bot.scrape_yacht_ids_and_save(competitor_name="rudder", company_search_text="rudder", company_click_text="rudder&moor")
         await bot.collect_data_and_save()
         logging.info("Tüm işlem tamamlandı.")
     except Exception as e:
         logging.error(f"Test sırasında hata oluştu: {str(e)}")
     finally:
         time.sleep(3)
-        if bot.driver:
-            bot.driver.quit()
+
 
 if __name__ == "__main__":
     asyncio.run(test_nausys_bot())
