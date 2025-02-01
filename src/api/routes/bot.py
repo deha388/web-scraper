@@ -13,7 +13,7 @@ def get_bot_controller(request: Request) -> BotController:
     return request.app.state.bot_controller
 
 
-@router.post("/start", response_model=BotStatusResponse)
+@router.post("/bot/start", response_model=BotStatusResponse)
 async def start_nausys_bot(
         current_user: str = Depends(get_current_user),
         bot_controller: BotController = Depends(get_bot_controller)
@@ -21,7 +21,7 @@ async def start_nausys_bot(
     return await bot_controller.start_bot(BotType.NAUSYS)
 
 
-@router.post("/stop", response_model=BotStatusResponse)
+@router.post("/bot/stop", response_model=BotStatusResponse)
 async def stop_nausys_bot(
         current_user: str = Depends(get_current_user),
         bot_controller: BotController = Depends(get_bot_controller)
@@ -29,7 +29,7 @@ async def stop_nausys_bot(
     return await bot_controller.stop_bot(BotType.NAUSYS)
 
 
-@router.get("/status", response_model=BotStatusResponse)
+@router.get("/bot/status", response_model=BotStatusResponse)
 async def get_nausys_status(
         current_user: str = Depends(get_current_user),
         bot_controller: BotController = Depends(get_bot_controller)

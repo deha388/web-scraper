@@ -16,6 +16,7 @@ from src.infra.config.config import COMPETITORS
 from src.infra.config.init_database import init_database
 from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.adapter.booking_data_repository import BookingDataRepository
+from src.infra.adapter.update_log_repository import UpdateLogRepository
 
 
 class BaseTracker:
@@ -49,7 +50,8 @@ class NausysTracker_test(BaseTracker):
             self.logger.info("Login form elementleri bekleniyor...")
 
             username = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']")))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']"))
+            )
             password = self.driver.find_element(By.CSS_SELECTOR, "input[type='password']")
 
             self.logger.info("Kullanıcı bilgileri giriliyor...")
@@ -60,7 +62,8 @@ class NausysTracker_test(BaseTracker):
             password.send_keys("sail1234")
 
             login_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
+            )
             login_button.click()
 
             WebDriverWait(self.driver, 10).until(
@@ -82,7 +85,9 @@ class NausysTracker_test(BaseTracker):
                     return
             self.logger.info("Booking list sayfasına yönlendiriliyor...")
             self.driver.get("https://agency.nausys.com/NauSYS-agency/app/bookinglist.xhtml")
-            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".layout-main")))
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".layout-main"))
+            )
             self.logger.info("Booking list sayfası başarıyla yüklendi.")
         except Exception as e:
             self.logger.error(f"Booking list sayfasına giderken hata oluştu: {str(e)}")
@@ -140,7 +145,7 @@ class NausysTracker_test(BaseTracker):
             self.logger.error(f"Charter firma seçerken hata: {str(e)}")
             raise
 
-    def get_yacht_ids_from_page(self) -> list:
+    def get_yacht_ids_from_page(self) -> dict:
         try:
             yacht_ids = {}
             yacht_rows = WebDriverWait(self.driver, 10).until(
@@ -164,7 +169,7 @@ class NausysTracker_test(BaseTracker):
             return yacht_ids
         except Exception as e:
             self.logger.error(f"Yacht ID'leri alınırken hata: {str(e)}")
-            return []
+            return {}
 
     async def scrape_yacht_ids_and_save(self, competitor_name: str, company_search_text: str, company_click_text: str):
         self.logger.info(f"Scrape süreci başlatıldı: '{company_search_text}' / '{company_click_text}'")
@@ -175,7 +180,7 @@ class NausysTracker_test(BaseTracker):
 
         self.go_to_booking_list_page()
         self.select_charter_company_and_search(company_search_text, company_click_text)
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         yacht_ids = self.get_yacht_ids_from_page()
         db_client = self.db_conf.db_session
@@ -295,6 +300,12 @@ class NausysTracker_test(BaseTracker):
         return date_pairs
 
     async def collect_data_and_save(self):
+        """
+        Her rakip için:
+          - Aynı gün güncelleme yapılmış yacht ID’ler repository üzerinden kontrol edilip atlanır.
+          - Tüm rakipler arasında (global) 7 yat ID güncellendikten sonra 1 saat beklenir.
+          - Her güncelleme sonucu (başarılı/hata) UpdateLogRepository aracılığıyla loglanır.
+        """
         if not self.logged_in:
             if not self.login():
                 self.logger.error("Login başarısız oldu, data toplanamıyor.")
@@ -302,65 +313,81 @@ class NausysTracker_test(BaseTracker):
 
         db_client = self.db_conf.db_session
         database = db_client["boat_tracker"]
-        #comp_repo = CompetitorRepository(database)
-        book_repo = BookingDataRepository(database)
 
-        # all_competitors = await comp_repo.get_all_competitors_and_yacht_ids()
-        # if not all_competitors:
-        #     self.logger.info("Hiç rakip bulunamadı, işlem yapılmıyor.")
-        #     return
+        # Repository örnekleri
+        # comp_repo = CompetitorRepository(database)  # Gerekirse kullanabilirsiniz
+        book_repo = BookingDataRepository(database)
+        update_log_repo = UpdateLogRepository(database)
 
         date_ranges = self.generate_weekly_dates()
         self.logger.info(f"Toplam {len(date_ranges)} haftalık periyot üretildi.")
 
-        for competitor_name, yacht_ids in COMPETITORS.items():
-            if not yacht_ids:
+        # Global güncelleme sayacını başlatıyoruz.
+        total_processed = 0
+        # Günün tarihini datetime olarak tanımlıyoruz (saat kısmı 00:00)
+        today_dt = datetime.combine(date.today(), datetime.min.time())
+
+        for competitor_name, competitor_data in COMPETITORS.items():
+            if not competitor_data:
                 continue
 
-            self.logger.info(f"\nFirma: {competitor_name}, Yat IDs: {yacht_ids}")
+            self.logger.info(f"\nFirma: {competitor_name}, Veriler: {competitor_data}")
+            yacht_ids_dict = competitor_data.get("yacht_ids", {})
 
-            # if not isinstance(yacht_ids, dict):
-            #     self.logger.warning(f"{competitor_name} için yacht_ids sözlük değil, atlanıyor.")
-            #     continue
-            #
-            # competitor_doc = await comp_repo.get_competitor_doc(competitor_name)
-            # if not competitor_doc:
-            #     self.logger.warning(f"{competitor_name} dokümanı bulunamadı, atlanıyor.")
-            #     continue
-            #
-            # search_text = competitor_doc.get("search_text", "")
-            # click_text = competitor_doc.get("click_text", "")
-            # if not search_text or not click_text:
-            #     self.logger.warning(f"{competitor_name} için search_text/click_text eksik. Atlanıyor.")
-            #     continue
+            for yid in yacht_ids_dict.values():
+                # Aynı gün için daha önce bu yacht ID güncellendiyse repository üzerinden kontrol edelim
+                query = {
+                    "competitor": competitor_name,
+                    "yacht_id": yid,
+                    "last_update_date": today_dt
+                }
+                log_entry = await update_log_repo.find_one(update_log_repo.collection_name, query)
+                if log_entry:
+                    self.logger.info(f"Yacht id {yid} zaten güncellendi, atlanıyor.")
+                    continue
 
-            # self.go_to_booking_list_page()
-            # self.select_charter_company_and_search(search_text, click_text)
-            # time.sleep(2)
-            yacht_ids = yacht_ids.get("yacht_ids", {})
-            for yid in yacht_ids.values():
-                self.logger.info(f"-- Yat ID: {yid}")
+                self.logger.info(f"-- Yat ID: {yid} güncelleniyor.")
                 doc = {
                     "yacht_id": yid,
-                    "last_update_date": date.today(),
+                    "last_update_date": today_dt,
                     "booking_periods": []
                 }
-                for (p_from, p_to) in date_ranges:
-                    details = self.fetch_booking_details(yid, p_from, p_to)
-                    if details:
-                        doc["booking_periods"].append({
-                            "period_from": p_from,
-                            "period_to": p_to,
-                            "details": [details]
-                        })
-
-                        self.logger.info(
-                            f"  * {p_from} -> {p_to} için veri eklendi."
-                        )
-                    else:
-                        self.logger.warning(f"  - {p_from} -> {p_to} için veri bulunamadı.")
-
-                await book_repo.save_daily_booking_data(competitor_name, [doc])
+                try:
+                    for (p_from, p_to) in date_ranges:
+                        details = self.fetch_booking_details(yid, p_from, p_to)
+                        if details:
+                            doc["booking_periods"].append({
+                                "period_from": p_from,
+                                "period_to": p_to,
+                                "details": [details]
+                            })
+                            self.logger.info(f"  * {p_from} -> {p_to} için veri eklendi.")
+                        else:
+                            self.logger.warning(f"  - {p_from} -> {p_to} için veri bulunamadı.")
+                    await book_repo.save_daily_booking_data(competitor_name, [doc])
+                    await update_log_repo.create_one(update_log_repo.collection_name, {
+                        "competitor": competitor_name,
+                        "yacht_id": yid,
+                        "last_update_date": today_dt,
+                        "status": "success",
+                        "timestamp": datetime.now()
+                    })
+                except Exception as update_err:
+                    self.logger.error(f"Yacht id {yid} güncellenirken hata: {update_err}")
+                    await update_log_repo.create_one(update_log_repo.collection_name, {
+                        "competitor": competitor_name,
+                        "yacht_id": yid,
+                        "last_update_date": today_dt,
+                        "status": "error",
+                        "error": str(update_err),
+                        "timestamp": datetime.now()
+                    })
+                total_processed += 1
+                self.logger.info(f"Toplam güncellenen yat ID sayısı: {total_processed}")
+                # Eğer global olarak 7 yat ID güncellemesi yapıldıysa 1 saat bekle
+                if total_processed % 7 == 0:
+                    self.logger.info("7 yat ID güncellendi. 1 saat bekleniyor...")
+                    await asyncio.sleep(3600)  # 3600 saniye = 1 saat
 
         self.logger.info("Tüm rakipler için data toplama işlemi tamamlandı.")
 
@@ -379,7 +406,10 @@ async def test_nausys_bot():
     bot = NausysTracker_test()
     bot.setup_driver()
     try:
-        #await bot.scrape_yacht_ids_and_save(competitor_name="rudder", company_search_text="rudder", company_click_text="rudder&moor")
+        # İsterseniz önce scrape işlemini yapabilir,
+        # veya doğrudan collect_data_and_save() ile güncelleme sürecini başlatabilirsiniz.
+        # Örneğin:
+        # await bot.scrape_yacht_ids_and_save(competitor_name="rudder", company_search_text="rudder", company_click_text="rudder&moor")
         await bot.collect_data_and_save()
         logging.info("Tüm işlem tamamlandı.")
     except Exception as e:

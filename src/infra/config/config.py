@@ -78,5 +78,70 @@ COMPETITORS = {
         },
         "search_text": "love",
         "click_text": "LoveSail"
+    },
+    "miber_sailing": {
+        "competitor_name": "miber_sailing",
+        "yacht_ids": {
+            "whispering_breeze": "39391969",
+            "miber_ahren": "39391966",
+            "miber_summerbird": "41913854",
+            "miber_mars": "32056951",
+            "miber_yigit": "32056953",
+            "miber_stella": "50541299",
+            "okto_sailors": "50541292"
+        },
+        "search_text": "miber",
+        "click_text": "Miber Sailing"
+    },
+    "most_sailing": {
+        "competitor_name": "most_sailing",
+        "yacht_ids": {
+            "kybele": "51840649"
+        },
+        "search_text": "most",
+        "click_text": "Most Sailing"
+    },
+    "nautice_alliance": {
+        "competitor_name": "nautice_alliance",
+        "yacht_ids": {
+            "4-friends": "10379823",
+            "regulus": "23194693"
+        },
+        "search_text": "nautic",
+        "click_text": "Nautic Alliance"
+    },
+    "navigare_yachting": {
+        "competitor_name": "navigare_yachting",
+        "yacht_ids": {
+            "west": "33096701"
+        },
+        "search_text": "navigare",
+        "click_text": "Navigare Yachting"
+    },
+    "pronto_sail": {
+        "competitor_name": "pronto_sail",
+        "yacht_ids": {
+            "pronto_sail": "44996407"
+        },
+        "search_text": "pronto",
+        "click_text": "Pronto Sail"
+    },
+    "saysail": {
+        "competitor_name": "saysail",
+        "yacht_ids": {
+            "yassica": "23457302",
+            "gemile": "31830620",
+            "patara": "23457199"
+        },
+        "search_text": "saysail",
+        "click_text": "SAYSAIL"
+    },
+    "tyc": {
+        "competitor_name": "tyc",
+        "yacht_ids": {
+            "serenity_bellagio": "39454082"
+        },
+        "search_text": "tyc",
+        "click_text": "TYC Serenity"
     }
 }
