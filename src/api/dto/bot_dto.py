@@ -22,3 +22,10 @@ class BotStatusResponse(BaseModel):
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
     bot_last_started: Optional[datetime] = None
+
+
+class BotDailyStatusResponse(BaseModel):
+    bot_id: int
+    status: str
+    last_update_date: Optional[datetime] = None
+    timestamp: Optional[datetime] = None

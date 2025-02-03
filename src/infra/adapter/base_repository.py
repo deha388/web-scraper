@@ -33,3 +33,9 @@ class BaseRepository:
     async def delete_one(self, collection_name: str, query: Dict[str, Any]):
         result = await self._db[collection_name].delete_one(query)
         return result.deleted_count
+
+    async def find_one_sorted(self, collection_name: str, query: Dict[str, Any], sort_spec: list) -> Dict[str, Any]:
+        cursor = self._db[collection_name].find(query).sort(sort_spec).limit(1)
+        doc_list = await cursor.to_list(length=1)
+        doc = doc_list[0] if doc_list else None
+        return doc

@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from src.api.controllers.bot_controller import BotController
-from src.api.dto.bot_dto import BotStatusResponse, BotType
+from src.api.dto.bot_dto import BotStatusResponse, BotType, BotDailyStatusResponse
 from src.core.auth.jwt_handler import get_current_user
+
+from typing import Optional
+
 import logging
 
 router = APIRouter()
@@ -9,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_bot_controller(request: Request) -> BotController:
-
     return request.app.state.bot_controller
 
 
@@ -35,3 +37,14 @@ async def get_nausys_status(
         bot_controller: BotController = Depends(get_bot_controller)
 ):
     return await bot_controller.get_bot_status(BotType.NAUSYS)
+
+
+@router.get("/bot/daily_status", response_model=BotDailyStatusResponse)
+async def get_daily_status(
+        bot_id: Optional[int] = Query(
+            None, description="Bot id(MMK or NAUSYS) giriniz."
+        ),
+        current_user: str = Depends(get_current_user),
+        bot_controller: BotController = Depends(get_bot_controller)
+):
+    return await bot_controller.get_bot_daily_status(bot_id)

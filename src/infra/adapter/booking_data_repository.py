@@ -76,3 +76,24 @@ class BookingDataRepository(BaseRepository):
         )
 
         return doc
+
+    async def get_booking_data_with_date(
+            self,
+            competitor: str,
+            yacht_id: str,
+            date_input: date,
+    ) -> Optional[Dict[str, Any]]:
+
+        filter_ = {
+            "competitor": competitor,
+            "yacht_id": yacht_id,
+            "last_update_date": {
+                "$gte": datetime(date_input.year, date_input.month, date_input.day, 0, 0, 0),
+                "$lte": datetime(date_input.year, date_input.month, date_input.day, 23, 59, 59)
+            }
+        }
+        doc = await self._db[self.collection_name].find_one(
+            filter=filter_
+        )
+
+        return doc

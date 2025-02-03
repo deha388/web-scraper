@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict
 
 from src.infra.config.init_database import init_database
-from src.api.dto.bot_dto import BotStatus, BotType, BotStatusResponse
+from src.api.dto.bot_dto import BotStatus, BotType, BotStatusResponse, BotDailyStatusResponse
 from src.core.tracker.nausys_tracker import NausysTracker
+from src.infra.adapter.bot_log_repository import BotLogRepository
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,14 @@ class BotInstance:
         self.tracker: Optional[NausysTracker] = None
 
 
+
 class BotController:
     def __init__(self, db=None):
         if db is None:
-            from src.infra.config.init_database import init_database
             db = init_database()
         self.db = db
         self.bots: Dict[BotType, BotInstance] = {BotType.NAUSYS: BotInstance()}
+
 
     async def start_bot(self, bot_type: BotType) -> BotStatusResponse:
         bot_instance = self.bots[bot_type]
@@ -162,4 +164,31 @@ class BotController:
             last_run=bot_instance.last_run,
             next_run=bot_instance.next_run,
             bot_last_started=bot_instance.last_started,
+        )
+
+    async def get_bot_daily_status(self, bot_id: int) -> BotDailyStatusResponse:
+        try:
+            db_client = self.db.db_session
+            database = db_client["boat_tracker"]
+            bot_log_repo = BotLogRepository(database)
+        except Exception as e:
+            print(e)
+            return
+
+        query = {
+            "bot_id": bot_id,
+        }
+        try:
+            bot_log = await bot_log_repo.find_one_sorted(bot_log_repo.collection_name, query, [("last_update_date", -1)])
+            print("#############")
+            print(bot_log)
+        except Exception as e:
+            print(e)
+            bot_log = None
+
+        return BotDailyStatusResponse(
+            bot_id=bot_log.get("bot_id"),
+            status=bot_log.get("status"),
+            last_update_date=bot_log.get("last_update_date"),
+            timestamp=bot_log.get("timestamp")
         )
