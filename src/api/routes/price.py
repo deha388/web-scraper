@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, Dict, Any, List
 import logging
-
+from datetime import datetime
 from src.core.auth.jwt_handler import get_current_user
 from src.infra.config.init_database import init_database
 from src.infra.adapter.booking_data_repository import BookingDataRepository
@@ -50,19 +50,23 @@ async def compare_prices(
         "[compare_prices] => competitor=%s, yacht_id=%s, yacht_id_sailamor=%s",
         competitor_name, yacht_id, yacht_id_sailamor
     )
+    parsed_date = datetime.strptime(date_str, "%d.%m.%Y")
 
     # 1) Dokümanları al
-    doc_competitor = await booking_repo.find_booking_doc(
+    doc_competitor = await booking_repo.get_booking_data_with_date(
         competitor=competitor_name,
-        yacht_id=yacht_id
+        yacht_id=yacht_id,
+        date_input=parsed_date,
     )
     if not doc_competitor:
         logger.warning(f"Rakip doc bulunamadı => competitor={competitor_name}, yacht_id={yacht_id}")
         doc_competitor = {}
 
-    doc_sailamor = await booking_repo.find_booking_doc(
+    doc_sailamor = await booking_repo.get_booking_data_with_date(
         competitor="sailamor",
-        yacht_id=yacht_id_sailamor
+        yacht_id=yacht_id_sailamor,
+        date_input=parsed_date,
+
     )
     if not doc_sailamor:
         logger.warning(f"Sailamor doc bulunamadı => competitor=sailamor, yacht_id={yacht_id_sailamor}")
@@ -114,7 +118,7 @@ async def compare_prices(
 
         # Rakip
         rakip_konum = comp_det.get("port_from", "")
-        rakip_fiyat_str = comp_det.get("total_price", "0")
+        rakip_fiyat_str = comp_det.get("total_advanced_payment", "0")
         rakip_list_price_str = comp_det.get("list_price", "0")
         discount_type = comp_det.get("discount_name", "")
         discount_percentage = comp_det.get("discount_percent", "")

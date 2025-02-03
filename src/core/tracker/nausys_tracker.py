@@ -17,6 +17,7 @@ from src.infra.config.init_database import init_database
 from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.adapter.booking_data_repository import BookingDataRepository
 from src.infra.adapter.update_log_repository import UpdateLogRepository
+from src.infra.adapter.bot_log_repository import BotLogRepository
 
 
 class BaseTracker:
@@ -353,6 +354,7 @@ class NausysTracker(BaseTracker):
             database = db_client["boat_tracker"]
             book_repo = BookingDataRepository(database)
             update_log_repo = UpdateLogRepository(database)
+            bot_log_repo = BotLogRepository(database)
         except Exception as e:
             self.logger.exception("DB bağlantısı oluşturulurken hata:", exc_info=True)
             return
@@ -361,6 +363,7 @@ class NausysTracker(BaseTracker):
         self.logger.info(f"Toplam {len(date_ranges)} haftalık periyot üretildi.")
 
         total_processed = 0
+        start_date = datetime.now()
         today_dt = datetime.combine(date.today(), datetime.min.time())
 
         for competitor_name, competitor_data in COMPETITORS.items():
@@ -437,6 +440,12 @@ class NausysTracker(BaseTracker):
                         break
 
         self.logger.info("Tüm rakipler için data toplama işlemi tamamlandı.")
+        await bot_log_repo.create_one(bot_log_repo.collection_name, {
+            "bot_id": 1,
+            "status": "success",
+            "last_update_date": datetime.now(),
+            "timestamp": start_date
+        })
 
     @staticmethod
     def format_date_for_api(date_str):
