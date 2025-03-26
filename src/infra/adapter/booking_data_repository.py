@@ -6,9 +6,9 @@ from src.infra.adapter.base_repository import BaseRepository
 
 
 class BookingDataRepository(BaseRepository):
-    def __init__(self, db: AsyncIOMotorDatabase):
+    def __init__(self, db: AsyncIOMotorDatabase, collection_name: None = "booking_data"):
         super().__init__(db)
-        self.collection_name = "booking_data"
+        self.collection_name = collection_name
 
     async def save_daily_booking_data(
             self,
@@ -60,9 +60,9 @@ class BookingDataRepository(BaseRepository):
         return docs
 
     async def find_booking_doc(
-        self,
-        competitor: str,
-        yacht_id: str
+            self,
+            competitor: str,
+            yacht_id: str
     ) -> Optional[Dict[str, Any]]:
 
         query = {

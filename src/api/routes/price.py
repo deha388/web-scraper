@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import Optional, Dict, Any, List
+from typing import Optional
 import logging
 
 from src.core.auth.jwt_handler import get_current_user
@@ -10,21 +10,22 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def get_booking_data_repo() -> BookingDataRepository:
+def get_booking_data_repo_by_platform(platform: str) -> BookingDataRepository:
+    platform = platform.lower()
+    if platform not in ["mmk", "nausys"]:
+        raise HTTPException(status_code=400, detail="Platform geçersiz. 'mmk' veya 'nausys' olmalı.")
+
     db_conf = init_database()
     db_client = db_conf.db_session
     database = db_client["boat_tracker"]
-    return BookingDataRepository(database)
+    db_name = f"booking_data_{platform}"
+    book_repo = BookingDataRepository(database, db_name)
+    return book_repo
 
 
 def parse_price(price_str: Optional[str]) -> float:
-    """
-    '3.750,00' şeklindeki stringi float(3750.00) olarak döndürür.
-    """
     if not price_str:
         return 0.0
-    # Binlik ayraç '.' karakterini silip,
-    # ondalık ayraç ',' karakterini '.' ile değiştiriyoruz.
     normalized = price_str.replace(".", "").replace(",", ".")
     try:
         return float(normalized)
@@ -34,24 +35,20 @@ def parse_price(price_str: Optional[str]) -> float:
 
 @router.get("/prices/compare")
 async def compare_prices(
+    platform: str = Query(..., description="Platform ismi ('mmk' ya da 'nausys')"),
     date_str: Optional[str] = Query(None, description="Günün tarihi (opsiyonel)"),
     competitor_name: str = Query(..., description="Rakip firma etiketi. Örn: 'rudder'"),
     yacht_id: str = Query(..., description="Rakip firmaya ait teknenin ID'si"),
     yacht_id_sailamor: str = Query(..., description="Sailamor'un (bizim) tekne ID'si"),
     current_user: str = Depends(get_current_user),
-    booking_repo: BookingDataRepository = Depends(get_booking_data_repo)
 ):
-    """
-    Rakip (competitor) ile Sailamor'un (biz) aynı haftalara ait fiyatlarını karşılaştıran endpoint.
-    Dönüşte tablo formatına benzer bir liste veriyoruz, 'tarih' alanında
-    hem period_from hem period_to değerlerini birleştiriyoruz.
-    """
+
+    booking_repo = get_booking_data_repo_by_platform(platform)
     logger.info(
         "[compare_prices] => competitor=%s, yacht_id=%s, yacht_id_sailamor=%s",
         competitor_name, yacht_id, yacht_id_sailamor
     )
 
-    # 1) Dokümanları al
     doc_competitor = await booking_repo.find_booking_doc(
         competitor=competitor_name,
         yacht_id=yacht_id
@@ -69,9 +66,8 @@ async def compare_prices(
         doc_sailamor = {}
 
     competitor_periods = doc_competitor.get("booking_periods", [])
-    sailamor_periods   = doc_sailamor.get("booking_periods", [])
+    sailamor_periods = doc_sailamor.get("booking_periods", [])
 
-    # 2) Sözlüklere dönüştür (hafta bazlı)
     competitor_map = {}
     for c_period in competitor_periods:
         pf = c_period.get("period_from")
@@ -86,10 +82,7 @@ async def compare_prices(
         details_list = s_period.get("details", [])
         sailamor_map[(pf, pt)] = details_list[0] if details_list else None
 
-    # Tüm hafta aralıklarının birleşimini alalım
     all_keys = set(list(competitor_map.keys()) + list(sailamor_map.keys()))
-
-    # 3) Side-by-side karşılaştırma listesi
     comparison_list = []
     for (pf, pt) in sorted(all_keys):
         competitor_details = competitor_map.get((pf, pt)) or {}
@@ -102,13 +95,10 @@ async def compare_prices(
             "sailamor_details": sailamor_details
         })
 
-    # --------------------------------------------------------
-    # 4) TABLO FORMATINA DÖNÜŞTÜRÜYORUZ
-    # --------------------------------------------------------
     result_table = []
     for row in comparison_list:
-        pf = row["period_from"]  # "2025-04-12 17:00:00"
-        pt = row["period_to"]    # "2025-04-19 08:00:00"
+        pf = row["period_from"]
+        pt = row["period_to"]
         comp_det = row["competitor_details"]
         sail_det = row["sailamor_details"]
 
@@ -134,7 +124,6 @@ async def compare_prices(
         diff = bizim_fiyat - rakip_fiyat
         fark = abs(diff)
 
-        # Durum: 0 => biz ucuz, 1 => rakip ucuz, 2 => eşit
         if diff < 0:
             durum = 0
         elif diff > 0:
@@ -142,10 +131,7 @@ async def compare_prices(
         else:
             durum = 2
 
-        # Tarih: hem period_from hem period_to birlikte
         tarih_str = f"{pf} - {pt}"
-
-        # Final tablo satırını oluştur
         result_table.append({
             "tarih": tarih_str,
             "bizim_konum": bizim_konum,

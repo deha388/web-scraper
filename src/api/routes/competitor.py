@@ -7,11 +7,21 @@ from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.config.init_database import init_database
 from src.core.auth.jwt_handler import get_current_user
 from src.api.controllers.bot_controller import BotController
-from src.infra.config.config import COMPETITORS
+from src.infra.config.config import COMPETITORS_MMK, COMPETITORS_NAUSY
 from src.api.dto.bot_dto import BotStatus, BotType
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def get_competitor_config(platform: str) -> Dict:
+    platform = platform.lower()
+    if platform == "mmk":
+        return COMPETITORS_MMK
+    elif platform == "nausys":
+        return COMPETITORS_NAUSY
+    else:
+        raise HTTPException(status_code=400, detail="Geçersiz platform adı: mmk ya da nausys olmalı.")
 
 
 def get_competitor_repo() -> CompetitorRepository:
@@ -33,12 +43,11 @@ class CompetitorCreateRequest(BaseModel):
 
 @router.post("/competitor/create-update")
 async def create_or_update_competitor(
-    req: CompetitorCreateRequest,
-    current_user: str = Depends(get_current_user),
-    comp_repo: CompetitorRepository = Depends(get_competitor_repo),
-    bot_controller: BotController = Depends(get_bot_controller),
+        req: CompetitorCreateRequest,
+        current_user: str = Depends(get_current_user),
+        comp_repo: CompetitorRepository = Depends(get_competitor_repo),
+        bot_controller: BotController = Depends(get_bot_controller),
 ):
-
     logger.info(f"[create_or_update_competitor] Rakip ekleme/güncelleme tetiklendi: {req}")
     bot_instance = bot_controller.bots[BotType.NAUSYS]
     if bot_instance.status != BotStatus.RUNNING:
@@ -93,14 +102,15 @@ async def create_or_update_competitor(
 
 @router.get("/competitor/yachts/names")
 async def get_competitor_yacht_names(
+    platform: str = Query(..., description="Platform ismi (nausys / mmk)"),
     competitor_name: Optional[str] = Query(
         None, description="Rakip ismi (opsiyonel). Örn 'sailamor'"
     ),
     current_user: str = Depends(get_current_user)
 ):
-    # DB'ye gitmeden, sabit config dosyasında tanımlı COMPETITORS üzerinden çalışıyoruz.
+    competitors_config = get_competitor_config(platform)
     if competitor_name:
-        competitor_doc = COMPETITORS.get(competitor_name)
+        competitor_doc = competitors_config.get(competitor_name)
         if not competitor_doc:
             raise HTTPException(status_code=404, detail=f"{competitor_name} bulunamadı.")
         yacht_ids: Dict[str, str] = competitor_doc.get("yacht_ids", {})
@@ -108,7 +118,7 @@ async def get_competitor_yacht_names(
         return {"yachts": yachts_list}
     else:
         result = []
-        for comp_name, comp_data in COMPETITORS.items():
+        for comp_name, comp_data in competitors_config.items():
             yacht_ids = comp_data.get("yacht_ids", {})
             yachts_list = [{"name": yname, "id": yid} for yname, yid in yacht_ids.items()]
             result.append({
@@ -120,19 +130,17 @@ async def get_competitor_yacht_names(
 
 @router.get("/competitor/yachts/details")
 async def get_competitor_details(
+    platform: str = Query(..., description="Platform ismi (nausys / mmk)"),
     competitor_name: Optional[str] = Query(
         None, description="Rakip ismi (opsiyonel)."
     ),
     current_user: str = Depends(get_current_user)
 ):
-    """
-    Eğer rakip ismi verilmişse ilgili rakibin dokümanını,
-    verilmemişse tüm rakip dokümanlarını döner.
-    """
+    competitors_config = get_competitor_config(platform)
     if competitor_name:
-        competitor_doc = COMPETITORS.get(competitor_name)
+        competitor_doc = competitors_config.get(competitor_name)
         if not competitor_doc:
             raise HTTPException(status_code=404, detail=f"{competitor_name} bulunamadı.")
         return competitor_doc
     else:
-        return list(COMPETITORS.values())
+        return list(competitors_config.values())

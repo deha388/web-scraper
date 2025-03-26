@@ -12,7 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
-from src.infra.config.config import COMPETITORS
+from src.infra.config.config import COMPETITORS_NAUSY as COMPETITORS
 from src.infra.config.init_database import init_database
 from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.adapter.booking_data_repository import BookingDataRepository
@@ -395,6 +395,7 @@ class NausysTracker(BaseTracker):
                 try:
                     for (p_from, p_to) in date_ranges:
                         try:
+                            time.sleep(30)
                             details = await self.fetch_booking_details(yid, p_from, p_to)
                         except Exception as inner_e:
                             self.logger.exception("fetch_booking_details sırasında hata:", exc_info=True)
