@@ -35,6 +35,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     try:
+        if hasattr(app.state.db, "close"):
+            app.state.db.close()
         logger.info("Closed MongoDB connection")
     except Exception as e:
         logger.error(f"Error closing MongoDB connection: {str(e)}")
@@ -52,8 +54,8 @@ def create_app():
     )
 
     # Configure your database
-    #database_url = f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{MONGO_IP}:{MONGO_PORT}?replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false"
-    database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
+    database_url = f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{MONGO_IP}:{MONGO_PORT}?replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false"
+    #database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
     config.database_url = database_url
     config.db_session
 

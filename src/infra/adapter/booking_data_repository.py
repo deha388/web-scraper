@@ -31,11 +31,15 @@ class BookingDataRepository(BaseRepository):
             yacht_id: str,
             query_date: date
     ) -> Dict[str, Any]:
-
+        start_dt = datetime(query_date.year, query_date.month, query_date.day, 0, 0, 0)
+        end_dt = datetime(query_date.year, query_date.month, query_date.day, 23, 59, 59)
         filter_ = {
             "competitor": competitor,
             "yacht_id": yacht_id,
-            "last_update_date": datetime(query_date.year, query_date.month, query_date.day, 0, 0, 0)
+            "last_update_date": {
+                "$gte": start_dt,
+                "$lte": end_dt
+            }
         }
         doc = await self.find_one(self.collection_name, filter_)
         return doc

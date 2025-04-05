@@ -13,24 +13,11 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 import asyncio
 
-# Config import (COMPETITORS_MMK yapısını COMPETITORS olarak alıyoruz)
 from src.infra.config.config import COMPETITORS_MMK as COMPETITORS
 
 from src.infra.config.init_database import init_database
 from src.infra.adapter.booking_data_repository import BookingDataRepository
 from src.infra.adapter.update_log_repository import UpdateLogRepository
-
-
-def format_currency(value):
-    """
-    Float değeri, Türk formatında (örneğin, 4600.00 -> "4.600,00") string'e çevirir.
-    """
-    try:
-        s = "{:,.2f}".format(value)
-    except Exception:
-        s = "0.00"
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
-    return s
 
 
 class MMKTracker:
@@ -40,6 +27,16 @@ class MMKTracker:
         # Login URL sabit
         self.login_url = "https://portal.booking-manager.com/wbm2/app/login_register/"
         self.logged_in = False
+
+    @staticmethod
+    def format_currency(value):
+
+        try:
+            s = "{:,.2f}".format(value)
+        except Exception:
+            s = "0.00"
+        s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+        return s
 
     def setup_driver(self):
         """Driver kurulumu"""
@@ -74,7 +71,7 @@ class MMKTracker:
             self.logger.error(f"Tıklama hatası: {str(e)}")
             return False
 
-    def login(self):
+    async def login(self):
         """Selenium ile giriş yapar ve cookie’leri hazırlar."""
         if self.logged_in:
             self.logger.info("Zaten login durumundasınız, tekrar giriş yapılmadı.")
@@ -96,7 +93,7 @@ class MMKTracker:
             )
             self.logger.info("MMK Booking Manager'a başarıyla giriş yapıldı")
             self.logged_in = True
-            time.sleep(5)
+            await asyncio.sleep(5)
             return True
         except Exception as e:
             self.logger.error(f"MMK login hatası: {str(e)}")
@@ -112,15 +109,7 @@ class MMKTracker:
         return session
 
     async def fetch_competitor_weekly_price_quotes(self, book_repo, update_log_repo):
-        """
-        Her rakip için:
-         - Config'deki parametrelerle BookingSheetData JSON isteği gönderilir.
-         - İlgili yacht_ids üzerinden, veri çekme işlemi yapılır (haftalık addToQueue istekleri).
-         - Gelen Price ve Commission bilgilerinden gerekli ayrıştırmalar yapılır.
-         - Her haftalık dönem için 'booking_periods' listesi oluşturulur.
-         - Son olarak, her rakip & yat için record oluşturulur ve DB'ye kaydedilir.
-           (Bir sonraki yat id'ye geçmeden önce DB'ye kayıt atılır.)
-        """
+
         session = self.get_session()
         today = datetime.date.today()
         days_ahead = 5 - today.weekday()
@@ -146,6 +135,10 @@ class MMKTracker:
 
             boats = data["boats"]
             for yacht_name, yacht_id in comp_data["yacht_ids"].items():
+                existing_booking = await book_repo.get_daily_booking_data(competitor_name, yacht_id, datetime.date.today())
+                if existing_booking:
+                    self.logger.info(f"Güncel veri mevcut: {competitor_name} - {yacht_name}. Güncelleme atlanıyor.")
+                    continue
                 self.logger.info(
                     f"Rakip: {competitor_name} - Yat: {yacht_name} (ID: {yacht_id}) için haftalık işlemler başlatılıyor...")
                 boat_data = next((b for b in boats if b.get("id") == yacht_id), None)
@@ -196,18 +189,14 @@ class MMKTracker:
                         current_start = current_end
                         continue
 
-                    # HTML parse ediliyor
                     response_add.encoding = 'utf-8'
                     soup = BeautifulSoup(response_add.text, "html.parser")
-
-                    # Fiyat bilgisi için tüm "Price:" etiketlerini buluyoruz
                     price_text = None
                     price_labels = soup.find_all("div", string=lambda s: s and "Price:" in s)
                     for label in price_labels:
                         sibling = label.find_next_sibling("div")
                         if sibling:
                             text = sibling.get_text(strip=True)
-                            # Eğer metin rakamla başlıyor ve "NaN" içermiyorsa doğru fiyat bilgisidir
                             if re.search(r'^\d', text) and "NaN" not in text:
                                 price_text = text
                                 break
@@ -218,9 +207,6 @@ class MMKTracker:
                         current_start = current_end
                         continue
 
-                    # Fiyat metni iki şekilde gelebilir:
-                    # 1) İndirimli: "4,140.00 € (4,600.00 € - 10.00%)"
-                    # 2) Sade fiyat: "3,750.00 €"
                     if "(" in price_text:
                         price_pattern = r'([\d,\.]+)\s*€\s*\(\s*([\d,\.]+)\s*€\s*-\s*([\d,\.]+)%\)'
                         m = re.search(price_pattern, price_text)
@@ -285,14 +271,14 @@ class MMKTracker:
 
                     client_price_val = total_price_val
                     agency_price_val = client_price_val - (commission_amount_val if commission_amount_val else 0)
-                    formatted_list_price = format_currency(list_price_val)
-                    formatted_total_price = format_currency(total_price_val)
-                    formatted_discount = "-" + format_currency(discount_amount_val)
-                    formatted_deposit = format_currency(deposit_val)
-                    formatted_commission = format_currency(
+                    formatted_list_price = self.format_currency(list_price_val)
+                    formatted_total_price = self.format_currency(total_price_val)
+                    formatted_discount = "-" + self.format_currency(discount_amount_val)
+                    formatted_deposit = self.format_currency(deposit_val)
+                    formatted_commission = self.format_currency(
                         commission_amount_val) if commission_amount_val is not None else ""
-                    formatted_client_price = format_currency(client_price_val)
-                    formatted_agency_price = format_currency(agency_price_val)
+                    formatted_client_price = self.format_currency(client_price_val)
+                    formatted_agency_price = self.format_currency(agency_price_val)
                     period_from_str = dt_from.strftime("%Y-%m-%d %H:%M:%S")
                     period_to_str = dt_to.strftime("%Y-%m-%d %H:%M:%S")
                     discount_name = "Discount"
@@ -329,7 +315,7 @@ class MMKTracker:
                     )
                     params_clear = {'view': 'PriceQuoteQueueBETA', 'action': 'clearQueue'}
                     session.post(base_url, params=params_clear)
-                    time.sleep(15)
+                    await asyncio.sleep(15)
                     current_start = current_end
 
                 record = {
@@ -347,9 +333,9 @@ class MMKTracker:
                     "status": "success",
                     "timestamp": datetime.datetime.now()
                 })
-                time.sleep(30)
+                await asyncio.sleep(30)
 
-            time.sleep(60)
+            await asyncio.sleep(60)
 
         print(json.dumps({"results": results}, indent=4, ensure_ascii=False, default=str))
         return results
@@ -371,7 +357,7 @@ if __name__ == "__main__":
     book_repo = BookingDataRepository(database, "booking_data_mmk")
     update_log_repo = UpdateLogRepository(database)
 
-    if tracker.login():
+    if asyncio.run(tracker.login()):
         asyncio.run(tracker.fetch_competitor_weekly_price_quotes(book_repo=book_repo, update_log_repo=update_log_repo))
     else:
         print("Giriş yapılamadı.")
