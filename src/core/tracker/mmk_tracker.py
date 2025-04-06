@@ -14,7 +14,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import asyncio
 
 from src.infra.config.config import COMPETITORS_MMK as COMPETITORS
-
+from src.infra.config.settings import MMK_USERNAME, MMK_PASSWORD
 from src.infra.config.init_database import init_database
 from src.infra.adapter.booking_data_repository import BookingDataRepository
 from src.infra.adapter.update_log_repository import UpdateLogRepository
@@ -47,7 +47,8 @@ class MMKTracker:
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
-        service = Service(ChromeDriverManager().install())
+        options.binary_location = '/usr/bin/chromium'
+        service = Service('/usr/bin/chromedriver')
         self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.implicitly_wait(10)
         self.logger.info("Driver başarıyla kuruldu.")
@@ -72,7 +73,7 @@ class MMKTracker:
             return False
 
     async def login(self):
-        """Selenium ile giriş yapar ve cookie’leri hazırlar."""
+        """Selenium ile giriş yapar ve cookie'leri hazırlar."""
         if self.logged_in:
             self.logger.info("Zaten login durumundasınız, tekrar giriş yapılmadı.")
             return True
@@ -81,8 +82,8 @@ class MMKTracker:
             time.sleep(5)
             username = self.wait_and_find_element(By.NAME, "login_email")
             password = self.wait_and_find_element(By.NAME, "login_password")
-            username.send_keys("sulhicanbilgin@gmail.com")
-            password.send_keys("Can260294")
+            username.send_keys(MMK_USERNAME)
+            password.send_keys(MMK_PASSWORD)
             login_button = self.wait_for_clickable(By.CSS_SELECTOR, "input[type='submit'][value='Login']")
             self.safe_click(login_button)
             WebDriverWait(self.driver, 10).until(

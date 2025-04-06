@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 from src.infra.config.config import COMPETITORS_NAUSY as COMPETITORS
+from src.infra.config.settings import NAUSYS_USERNAME, NAUSYS_PASSWORD
 from src.infra.config.init_database import init_database
 from src.infra.adapter.competitor_repository import CompetitorRepository
 from src.infra.adapter.booking_data_repository import BookingDataRepository
@@ -62,8 +63,8 @@ class NausysTracker(BaseTracker):
             username.clear()
             password.clear()
 
-            username.send_keys("user@SAAMO")
-            password.send_keys("sail1234")
+            username.send_keys(NAUSYS_USERNAME)
+            password.send_keys(NAUSYS_PASSWORD)
 
             login_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
@@ -339,7 +340,7 @@ class NausysTracker(BaseTracker):
     async def collect_data_and_save(self):
         """
         Her rakip için:
-          - Aynı gün güncelleme yapılmış yacht ID’ler kontrol edilip atlanır.
+          - Aynı gün güncelleme yapılmış yacht ID'ler kontrol edilip atlanır.
           - Tüm rakipler arasında (global) 7 yat ID güncellendikten sonra 1 saat beklenir.
           - Her güncelleme sonucu (başarılı/hata) UpdateLogRepository aracılığıyla loglanır.
         """

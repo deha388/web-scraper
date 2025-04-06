@@ -8,6 +8,7 @@ from src.api.controllers.bot_controller import BotController
 from fastapi.middleware.cors import CORSMiddleware
 from src.origins import get_origins
 import logging
+from urllib.parse import quote_plus
 
 # Configure logging
 logging.basicConfig(
@@ -54,8 +55,13 @@ def create_app():
     )
 
     # Configure your database
-    database_url = f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{MONGO_IP}:{MONGO_PORT}?replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false"
-    #database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
+    if MONGO_USERNAME and MONGO_PASSWORD:
+        username = quote_plus(MONGO_USERNAME)
+        password = quote_plus(MONGO_PASSWORD)
+        database_url = f"mongodb://{username}:{password}@{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
+    else:
+        database_url = f"mongodb://{MONGO_IP}:{MONGO_PORT}/{MONGO_DB}"
+    
     config.database_url = database_url
     config.db_session
 

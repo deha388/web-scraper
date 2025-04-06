@@ -4,23 +4,33 @@ services:
     build: .
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      - MONGO_URI=mongodb://mongo:27017
-      - MONGO_DB=boat_tracker
-      - MONGO_USERNAME=boat_user
-      - MONGO_PASSWORD=boat_password
+      - MONGO_IP=${MONGO_IP}
+      - MONGO_PORT=27025
+      - MONGO_DB=${MONGO_DB}
+      - MONGO_USERNAME=${MONGO_USERNAME}
+      - MONGO_PASSWORD=${MONGO_PASSWORD}
+      - MMK_USERNAME=${MMK_USERNAME}
+      - MMK_PASSWORD=${MMK_PASSWORD}
+      - NAUSYS_USERNAME=${NAUSYS_USERNAME}
+      - NAUSYS_PASSWORD=${NAUSYS_PASSWORD}
     depends_on:
       - mongo
 
   mongo:
     image: mongo:latest
+    command: mongod --port 27025 --auth
     ports:
-      - "27017:27017"
+      - "27025:27025"
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=boat_user
-      - MONGO_INITDB_ROOT_PASSWORD=boat_password
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
+      - MONGO_INITDB_DATABASE=${MONGO_DB}
     volumes:
       - mongodb_data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
 
 volumes:
   mongodb_data:
